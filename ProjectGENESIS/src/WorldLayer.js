@@ -43,13 +43,17 @@ export class WorldLayer extends Layer {
             thermalWind: 0.5,        // 温差风强度
             // 水
             waterFlow: 0.2,         // 水流速度
-            waterEvap: 0.0001       // 水自然蒸发
+            waterEvap: 0.0001,     // 水自然蒸发
+            // 侵蚀
+            erosionRate: 0.001,    // 侵蚀速率
+            depositionRate: 0.0005, // 沉积速率
+            erosionStrength: 0.1   // 侵蚀强度
         };
         
         // 可视化开关
         this.showHeight = true;
         this.showTemp = false;
-        this.showCloud = true;
+        this.showCloud = false;
         this.showWind = false;
         this.showHillshade = true;
         this.showWater = true; // 默认显示水
@@ -153,6 +157,11 @@ export class WorldLayer extends Layer {
         const waterFolder = physFolder.addFolder({ title: 'Water Physics' });
         waterFolder.addBinding(this.simParams, 'waterFlow', { min: 0.0, max: 1.0, step: 0.01, label: 'Flow Rate' });
         waterFolder.addBinding(this.simParams, 'waterEvap', { min: 0.0, max: 0.01, step: 0.0001, label: 'Evaporation' });
+        
+        const erosionFolder = physFolder.addFolder({ title: 'Erosion' });
+        erosionFolder.addBinding(this.simParams, 'erosionRate', { min: 0.0, max: 0.01, step: 0.0001, label: 'Erosion Rate' });
+        erosionFolder.addBinding(this.simParams, 'depositionRate', { min: 0.0, max: 0.01, step: 0.0001, label: 'Deposition Rate' });
+        erosionFolder.addBinding(this.simParams, 'erosionStrength', { min: 0.0, max: 1.0, step: 0.01, label: 'Erosion Strength' });
 
         // 2. 显示图层开关
         const viewFolder = this.guiFolder.addFolder({ title: 'Layers Visibility', expanded: true });
@@ -242,6 +251,9 @@ export class WorldLayer extends Layer {
         gl.uniform1f(gl.getUniformLocation(this.programs.sim, 'u_thermalWind'), this.simParams.thermalWind);
         gl.uniform1f(gl.getUniformLocation(this.programs.sim, 'u_waterFlow'), this.simParams.waterFlow);
         gl.uniform1f(gl.getUniformLocation(this.programs.sim, 'u_waterEvap'), this.simParams.waterEvap);
+        gl.uniform1f(gl.getUniformLocation(this.programs.sim, 'u_erosionRate'), this.simParams.erosionRate);
+        gl.uniform1f(gl.getUniformLocation(this.programs.sim, 'u_depositionRate'), this.simParams.depositionRate);
+        gl.uniform1f(gl.getUniformLocation(this.programs.sim, 'u_erosionStrength'), this.simParams.erosionStrength);
         
         // 将当前的 viewMode 作为目标层传递给 Sim Shader (0=Height, 1=Temp)
         gl.uniform1i(gl.getUniformLocation(this.programs.sim, 'u_targetLayer'), this.brushTarget);

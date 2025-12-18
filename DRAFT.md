@@ -113,6 +113,8 @@
 
 - well，也许是我想复杂了，我应该先做一个100x100的平坦方块地图，让我的NPC跑起来，而不是一开始就去啃河流生算法，那将是一个无底洞，点到为止。
 
+- From Micro to Macro, or, From Macro to Micro ?
+
 # RoadMap / 创世蓝图 / The Great Chain of Being
 
 一步一个坚实的脚印，向伟大的目标前进吧！

@@ -13,7 +13,7 @@ export class CircleBrush {
         this.value = 0.5;
         
         /** @type {number} 画笔半径 (像素格子数) */
-        this.radius = 8;
+        this.radius = 16;
         
         /** @type {number} 随机扰动强度 (0-1) */
         this.disturbance = 0.8;

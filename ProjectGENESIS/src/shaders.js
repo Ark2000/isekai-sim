@@ -38,6 +38,9 @@ uniform float u_tempInertia;     // 0.995
 uniform float u_thermalWind;     // 0.5
 uniform float u_waterFlow;       // 0.2
 uniform float u_waterEvap;       // 0.0001
+uniform float u_erosionRate;     // 0.001 侵蚀速率
+uniform float u_depositionRate;  // 0.0005 沉积速率
+uniform float u_erosionStrength; // 0.1 侵蚀强度
 
 // 4个输出目标
 layout(location = 0) out vec4 out_tex0;
@@ -87,65 +90,292 @@ void main() {
     vec4 d0 = texture(u_tex0, v_uv);
     vec4 d1 = texture(u_tex1, v_uv);
     vec4 d2 = texture(u_tex2, v_uv); // R=WindX, G=WindY, B=Cloud, A=Vapor
-    vec4 d3 = texture(u_tex3, v_uv); // R=Water Depth
+    vec4 d3 = texture(u_tex3, v_uv); // R=Water Depth, G=Sediment (泥沙量), B=未使用
 
     // --- 0. 全局物理参数 ---
     vec2 pixelSize = 1.0 / vec2(textureSize(u_tex0, 0));
     
-    // --- 0.5 水流模拟 (Water Flow) - 守恒版本 ---
+    // --- 0.5 水流模拟 (Water Flow) - 基于高度差的简单扩散，水量守恒 ---
     float land = d0.r;
     float water = d3.r;
     
-    if (water > 0.0001 || true) { // 总是计算，包括接收流入
-        // 计算当前点的总高度 (Terrain + Water)
-        float h = land + water;
-        
-        // 采样周围 4 个点
-        vec4 nLand;
-        nLand.x = texture(u_tex0, v_uv + vec2(-pixelSize.x, 0)).r;
-        nLand.y = texture(u_tex0, v_uv + vec2(pixelSize.x, 0)).r;
-        nLand.z = texture(u_tex0, v_uv + vec2(0, -pixelSize.y)).r;
-        nLand.w = texture(u_tex0, v_uv + vec2(0, pixelSize.y)).r;
-        
-        vec4 nWater;
-        nWater.x = texture(u_tex3, v_uv + vec2(-pixelSize.x, 0)).r;
-        nWater.y = texture(u_tex3, v_uv + vec2(pixelSize.x, 0)).r;
-        nWater.z = texture(u_tex3, v_uv + vec2(0, -pixelSize.y)).r;
-        nWater.w = texture(u_tex3, v_uv + vec2(0, pixelSize.y)).r;
-        
-        // 邻居总高度
-        vec4 nH = nLand + nWater;
-        
-        // 简化的守恒流动模型：
-        // 对每个邻居，如果它的水位比我高，我们就"交换"一部分水
-        // 交换量 = (他的水位 - 我的水位) * 系数
-        float flowChange = 0.0;
-        
-        // 左
-        float deltaH_L = (nH.x - h);
-        flowChange += deltaH_L * u_waterFlow * 0.25;
-        
-        // 右
-        float deltaH_R = (nH.y - h);
-        flowChange += deltaH_R * u_waterFlow * 0.25;
-        
-        // 下
-        float deltaH_D = (nH.z - h);
-        flowChange += deltaH_D * u_waterFlow * 0.25;
-        
-        // 上
-        float deltaH_U = (nH.w - h);
-        flowChange += deltaH_U * u_waterFlow * 0.25;
-        
-        // 更新水量
-        water += flowChange;
+    // 水流参数
+    float flowRate = u_waterFlow;  // 使用uniform参数
+    float minWater = 0.0001;  // 最小水深阈值
+    
+    // 采样周围4个点的地形和水量
+    vec4 nLand;
+    nLand.x = texture(u_tex0, v_uv + vec2(-pixelSize.x, 0)).r;  // 左
+    nLand.y = texture(u_tex0, v_uv + vec2(pixelSize.x, 0)).r;   // 右
+    nLand.z = texture(u_tex0, v_uv + vec2(0, -pixelSize.y)).r;  // 下
+    nLand.w = texture(u_tex0, v_uv + vec2(0, pixelSize.y)).r;  // 上
+    
+    vec4 nWater;
+    nWater.x = texture(u_tex3, v_uv + vec2(-pixelSize.x, 0)).r;  // 左
+    nWater.y = texture(u_tex3, v_uv + vec2(pixelSize.x, 0)).r;   // 右
+    nWater.z = texture(u_tex3, v_uv + vec2(0, -pixelSize.y)).r;  // 下
+    nWater.w = texture(u_tex3, v_uv + vec2(0, pixelSize.y)).r;   // 上
+    
+    // 计算当前点和邻居的总高度（地形 + 水）
+    float totalHeight = land + water;
+    vec4 nTotalHeight;
+    nTotalHeight.x = nLand.x + nWater.x;
+    nTotalHeight.y = nLand.y + nWater.y;
+    nTotalHeight.z = nLand.z + nWater.z;
+    nTotalHeight.w = nLand.w + nWater.w;
+    
+    // 计算每个方向的高度差
+    vec4 heightDiff;
+    heightDiff.x = nTotalHeight.x - totalHeight;  // 左邻居 - 当前
+    heightDiff.y = nTotalHeight.y - totalHeight;  // 右邻居 - 当前
+    heightDiff.z = nTotalHeight.z - totalHeight;  // 下邻居 - 当前
+    heightDiff.w = nTotalHeight.w - totalHeight;  // 上邻居 - 当前
+    
+    // 计算每个方向的流量（守恒版本，考虑水深和坡度影响）
+    // 关键：只有当邻居有水时才能流入，只有当当前有水时才能流出（防止水凭空出现）
+    // 改进1：深水流动更快（考虑水深对流速的影响）
+    // 改进2：陡坡流动更快（考虑地形坡度）
+    float flowChange = 0.0;
+    
+    // 计算当前点的有效流速（深水流动更快）
+    float currentFlowSpeed = flowRate * (0.5 + 0.5 * sqrt(clamp(water, 0.0, 1.0)));
+    
+    // 左方向
+    if (heightDiff.x > 0.0 && nWater.x > minWater) {
+        // 左邻居总高度更高且有水，水从左流过来
+        float neighborFlowSpeed = flowRate * (0.5 + 0.5 * sqrt(clamp(nWater.x, 0.0, 1.0)));
+        float slopeFactor = 1.0 + abs(heightDiff.x) * 2.0;  // 坡度越大，流速越快
+        float flow = heightDiff.x * neighborFlowSpeed * slopeFactor * 0.25;
+        flowChange += flow;
+    } else if (heightDiff.x < 0.0 && water > minWater) {
+        // 当前总高度更高且有水，水向左流出去
+        float slopeFactor = 1.0 + abs(heightDiff.x) * 2.0;
+        float flow = heightDiff.x * currentFlowSpeed * slopeFactor * 0.25;
+        flowChange += flow;
     }
     
-    // 蒸发
-    water = max(0.0, water - u_waterEvap);
+    // 右方向
+    if (heightDiff.y > 0.0 && nWater.y > minWater) {
+        float neighborFlowSpeed = flowRate * (0.5 + 0.5 * sqrt(clamp(nWater.y, 0.0, 1.0)));
+        float slopeFactor = 1.0 + abs(heightDiff.y) * 2.0;
+        float flow = heightDiff.y * neighborFlowSpeed * slopeFactor * 0.25;
+        flowChange += flow;
+    } else if (heightDiff.y < 0.0 && water > minWater) {
+        float slopeFactor = 1.0 + abs(heightDiff.y) * 2.0;
+        float flow = heightDiff.y * currentFlowSpeed * slopeFactor * 0.25;
+        flowChange += flow;
+    }
     
-    d3.r = clamp(water, 0.0, 10.0);
+    // 下方向
+    if (heightDiff.z > 0.0 && nWater.z > minWater) {
+        float neighborFlowSpeed = flowRate * (0.5 + 0.5 * sqrt(clamp(nWater.z, 0.0, 1.0)));
+        float slopeFactor = 1.0 + abs(heightDiff.z) * 2.0;
+        float flow = heightDiff.z * neighborFlowSpeed * slopeFactor * 0.25;
+        flowChange += flow;
+    } else if (heightDiff.z < 0.0 && water > minWater) {
+        float slopeFactor = 1.0 + abs(heightDiff.z) * 2.0;
+        float flow = heightDiff.z * currentFlowSpeed * slopeFactor * 0.25;
+        flowChange += flow;
+    }
+    
+    // 上方向
+    if (heightDiff.w > 0.0 && nWater.w > minWater) {
+        float neighborFlowSpeed = flowRate * (0.5 + 0.5 * sqrt(clamp(nWater.w, 0.0, 1.0)));
+        float slopeFactor = 1.0 + abs(heightDiff.w) * 2.0;
+        float flow = heightDiff.w * neighborFlowSpeed * slopeFactor * 0.25;
+        flowChange += flow;
+    } else if (heightDiff.w < 0.0 && water > minWater) {
+        float slopeFactor = 1.0 + abs(heightDiff.w) * 2.0;
+        float flow = heightDiff.w * currentFlowSpeed * slopeFactor * 0.25;
+        flowChange += flow;
+    }
+    
+    // 更新水量（放宽限制，允许更快流动，但仍防止数值不稳定）
+    // 使用更宽松的限制：每帧最多变化50%，但限制绝对最大值
+    float maxChange = max(water, 0.01) * 0.5;  // 每帧最多变化50%
+    float absoluteMaxChange = 0.1;  // 绝对最大值，防止极端情况
+    flowChange = clamp(flowChange, -min(maxChange, absoluteMaxChange), min(maxChange, absoluteMaxChange));
+    
+    // 只有当周围有水或当前有水时，才允许水深变化（防止水凭空出现）
+    bool hasNeighborWater = nWater.x > minWater || nWater.y > minWater || 
+                            nWater.z > minWater || nWater.w > minWater;
+    if (water > minWater || hasNeighborWater) {
+        water += flowChange;
+        water = max(0.0, water);  // 确保水深不为负
+    }
+    
+    // 如果水深太小，清零
+    if (water < minWater) {
+        water = 0.0;
+    }
+    
+    // 蒸发 - 已禁用
+    // water = max(0.0, water - u_waterEvap);
+    
+    // 更新输出（不需要速度场，所以清零）
+    // 移除硬上限，改为软限制：超过20时缓慢衰减，保持水量守恒
+    if (water > 20.0) {
+        // 如果水太多，缓慢衰减（模拟溢出或蒸发），但保持大部分水
+        water = 20.0 + (water - 20.0) * 0.99;
+    }
+    // 读取当前泥沙量
+    float sediment = d3.g;
+    
+    d3.r = max(water, 0.0);  // 只确保不为负，不限制上限
 
+    // --- 0.6 水力侵蚀 (Hydraulic Erosion) - 改进版 ---
+    // 1. 泥沙携带模型：侵蚀的物质被水携带，在流速慢时沉积
+    // 2. 地形硬度：基于坡度，陡坡更易侵蚀
+    // 3. 改进沉积模型：基于流速梯度（从快到慢）
+    
+    float erosionChange = 0.0;
+    float depositionChange = 0.0;
+    float sedimentChange = 0.0;
+    
+    if (water > minWater) {
+        // 计算当前点的水流速度（从高度差估算）
+        float maxHeightDiff = max(max(abs(heightDiff.x), abs(heightDiff.y)), 
+                                  max(abs(heightDiff.z), abs(heightDiff.w)));
+        float estimatedVelocity = maxHeightDiff * currentFlowSpeed;
+        
+        // 计算地形坡度（用于地形硬度）
+        // 坡度 = 地形高度差（不考虑水）
+        vec4 landHeightDiff;
+        landHeightDiff.x = nLand.x - land;
+        landHeightDiff.y = nLand.y - land;
+        landHeightDiff.z = nLand.z - land;
+        landHeightDiff.w = nLand.w - land;
+        
+        float maxLandSlope = max(max(abs(landHeightDiff.x), abs(landHeightDiff.y)), 
+                                 max(abs(landHeightDiff.z), abs(landHeightDiff.w)));
+        
+        // 地形硬度：坡度越大（越陡），越容易侵蚀
+        // 但也要考虑：非常陡的坡可能更硬（岩石），所以用平滑函数
+        float hardness = 1.0 - smoothstep(0.0, 0.3, maxLandSlope) * 0.5;  // 陡坡硬度降低，但不会完全消失
+        hardness = max(0.3, hardness);  // 最小硬度30%
+        
+        // 计算泥沙携带能力（Sediment Capacity）
+        // 流速越快、水越深，能携带的泥沙越多
+        float sedimentCapacity = estimatedVelocity * water * 0.5;
+        sedimentCapacity = clamp(sedimentCapacity, 0.0, 0.1);  // 限制最大携带量
+        
+        // 侵蚀：如果当前泥沙量 < 携带能力，则继续侵蚀
+        if (sediment < sedimentCapacity) {
+            // 侵蚀量 = (携带能力 - 当前泥沙) * 侵蚀系数 * 地形硬度
+            float erosionAmount = (sedimentCapacity - sediment) * u_erosionRate * u_erosionStrength * hardness;
+            
+            // 限制侵蚀速度
+            float maxErosion = land * 0.01;  // 每帧最多侵蚀1%
+            erosionAmount = min(erosionAmount, maxErosion);
+            erosionAmount = min(erosionAmount, 0.001);  // 绝对最大值
+            
+            // 侵蚀地形，增加泥沙
+            erosionChange = -erosionAmount;
+            sedimentChange = erosionAmount;
+        }
+        
+        // 沉积：如果当前泥沙量 > 携带能力，则沉积
+        // 改进：基于流速梯度（从快到慢时更容易沉积）
+        if (sediment > sedimentCapacity) {
+            // 计算流速梯度（当前流速 vs 邻居平均流速）
+            float avgNeighborVelocity = 0.0;
+            float neighborCount = 0.0;
+            
+            // 采样邻居的流速（简化：用高度差估算）
+            if (nWater.x > minWater) {
+                float nVel = abs(heightDiff.x) * flowRate;
+                avgNeighborVelocity += nVel;
+                neighborCount += 1.0;
+            }
+            if (nWater.y > minWater) {
+                float nVel = abs(heightDiff.y) * flowRate;
+                avgNeighborVelocity += nVel;
+                neighborCount += 1.0;
+            }
+            if (nWater.z > minWater) {
+                float nVel = abs(heightDiff.z) * flowRate;
+                avgNeighborVelocity += nVel;
+                neighborCount += 1.0;
+            }
+            if (nWater.w > minWater) {
+                float nVel = abs(heightDiff.w) * flowRate;
+                avgNeighborVelocity += nVel;
+                neighborCount += 1.0;
+            }
+            
+            if (neighborCount > 0.0) {
+                avgNeighborVelocity /= neighborCount;
+            }
+            
+            // 如果当前流速 < 邻居平均流速（流速变慢），更容易沉积
+            float velocityGradient = max(0.0, avgNeighborVelocity - estimatedVelocity);
+            float depositionFactor = 1.0 + velocityGradient * 10.0;  // 流速梯度越大，沉积越快
+            
+            // 沉积量 = (当前泥沙 - 携带能力) * 沉积系数 * 流速梯度因子
+            float excessSediment = sediment - sedimentCapacity;
+            float depositionAmount = excessSediment * u_depositionRate * depositionFactor;
+            
+            // 限制沉积速度
+            depositionAmount = min(depositionAmount, 0.0005);
+            depositionAmount = min(depositionAmount, excessSediment);  // 不能沉积超过多余的泥沙
+            
+            // 沉积地形，减少泥沙
+            depositionChange = depositionAmount;
+            sedimentChange = -depositionAmount;
+        }
+    }
+    
+    // 更新泥沙量（考虑平流：泥沙会随水流动）
+    // 简化：泥沙会随水流方向移动
+    if (water > minWater) {
+        // 计算泥沙的平流（简化：使用平均流速）
+        float avgFlowSpeed = currentFlowSpeed;
+        float sedimentAdvection = 0.0;
+        
+        // 采样邻居的泥沙量
+        vec4 nSediment;
+        nSediment.x = texture(u_tex3, v_uv + vec2(-pixelSize.x, 0)).g;
+        nSediment.y = texture(u_tex3, v_uv + vec2(pixelSize.x, 0)).g;
+        nSediment.z = texture(u_tex3, v_uv + vec2(0, -pixelSize.y)).g;
+        nSediment.w = texture(u_tex3, v_uv + vec2(0, pixelSize.y)).g;
+        
+        // 简化的平流：根据水流方向混合邻居的泥沙
+        // 如果水向左流，泥沙从左来；如果向右流，泥沙从右来
+        if (heightDiff.x < 0.0 && water > minWater) {
+            // 水向左流，泥沙从左来
+            sedimentAdvection += (nSediment.x - sediment) * 0.1;
+        }
+        if (heightDiff.y < 0.0 && water > minWater) {
+            // 水向右流，泥沙从右来
+            sedimentAdvection += (nSediment.y - sediment) * 0.1;
+        }
+        if (heightDiff.z < 0.0 && water > minWater) {
+            // 水向下流，泥沙从下来
+            sedimentAdvection += (nSediment.z - sediment) * 0.1;
+        }
+        if (heightDiff.w < 0.0 && water > minWater) {
+            // 水向上流，泥沙从上来
+            sedimentAdvection += (nSediment.w - sediment) * 0.1;
+        }
+        
+        sediment += sedimentAdvection * 0.5;  // 平流强度
+    }
+    
+    // 更新泥沙量（侵蚀/沉积 + 平流）
+    sediment += sedimentChange;
+    sediment = max(0.0, sediment);  // 确保不为负
+    sediment = min(0.2, sediment);  // 限制最大泥沙量
+    
+    // 更新地形高度（侵蚀和沉积）
+    float totalTerrainChange = erosionChange + depositionChange;
+    land += totalTerrainChange;
+    land = max(0.0, land);  // 确保地形高度不为负
+    land = min(1.0, land);  // 限制最大高度
+    
+    // 更新输出
+    d0.r = land;
+    d3.g = sediment;  // 存储泥沙量
+    d3.b = 0.0;  // 未使用
 
     // --- 1. 风场计算 (Tex2.RG) ---
     // 基础风: 向东吹 (1.0, 0.0)
@@ -217,23 +447,23 @@ void main() {
     // float temp = d1.r; // 此时 temp 已经在上面通过平流更新了，不需要再读 d1.r
     float height = d0.r;
     
-    // 3.1 蒸发 (Evaporation): 水面(高度低 或 有水)且温度高的地方产生水汽
+    // 3.1 蒸发 (Evaporation) - 已禁用所有蒸发
     float evaporation = 0.0;
     
-    // A. 海洋蒸发（低地 + 没有额外水层）
-    if (height < 0.2 && water < 0.01) {
-        evaporation = max(0.0, temp - 0.3) * u_evaporation;
-    }
+    // A. 海洋蒸发（低地 + 没有额外水层）- 已禁用
+    // if (height < 0.2 && water < 0.01) {
+    //     evaporation = max(0.0, temp - 0.3) * u_evaporation;
+    // }
     
-    // B. 湖泊/河流/积水蒸发（有水层的地方）
-    if (water > 0.001) {
-        // 水面蒸发，温度越高蒸发越快
-        float waterEvapRate = u_evaporation * 2.0; // 水面蒸发是海洋的2倍（更浅更容易蒸发）
-        evaporation += max(0.0, temp - 0.2) * waterEvapRate;
-        
-        // 同时，水面蒸发会减少水量（除了产生水汽，也有"蒸发损失"）
-        water = max(0.0, water - u_waterEvap);
-    }
+    // B. 湖泊/河流/积水蒸发（有水层的地方）- 已禁用
+    // if (water > 0.001) {
+    //     // 水面蒸发，温度越高蒸发越快
+    //     float waterEvapRate = u_evaporation * 2.0; // 水面蒸发是海洋的2倍（更浅更容易蒸发）
+    //     evaporation += max(0.0, temp - 0.2) * waterEvapRate;
+    //     
+    //     // 同时，水面蒸发会减少水量（除了产生水汽，也有"蒸发损失"）
+    //     water = max(0.0, water - u_waterEvap);
+    // }
     
     vapor += evaporation;
     
@@ -256,15 +486,15 @@ void main() {
     vapor -= condensed;
     cloud += condensed;
     
-    // 3.3 降雨 (Precipitation) - 关键：降雨形成地面水！
-    // 云太厚会下雨，雨水落到地面增加水量
+    // 3.3 降雨 (Precipitation) - 已禁用：降雨不再生成地面水
+    // 云太厚会下雨，但雨水不再落到地面增加水量
     float rain = 0.0;
     if (cloud > u_rainThreshold) {
         rain = (cloud - u_rainThreshold) * 0.05;
         cloud -= rain;
         
-        // 雨水落到地面，增加水深！
-        water += rain * 0.5; // 0.5 是转换系数（云密度 -> 水深）
+        // 雨水落到地面，增加水深！ - 已禁用
+        // water += rain * 0.5; // 0.5 是转换系数（云密度 -> 水深）
     }
     
     cloud *= u_cloudDecay; // 自然衰减
@@ -272,11 +502,7 @@ void main() {
     d2.b = clamp(cloud, 0.0, 1.0);
     d2.a = clamp(vapor, 0.0, 1.0);
     
-    // 更新水深（之前只在流动部分更新，现在降雨也会增加）
-    d3.r = clamp(water, 0.0, 10.0);
-    
-    d2.b = clamp(cloud, 0.0, 1.0);
-    d2.a = clamp(vapor, 0.0, 1.0);
+    // 注意：水深已在浅水方程部分更新（d3.r, d3.g, d3.b）
     
     // --- 4. 笔刷交互逻辑 ---
     if (u_isBrushing > 0) {
@@ -497,6 +723,7 @@ vec3 colorInterpolate(vec3 c1, vec3 c2, float v1, float v2, float value) {
 }
 
 vec3 getTerrainColor(float value) {
+/*
     vec3 c1 = vec3(0.233, 0.289, 0.580);
     vec3 c2 = vec3(0.255, 0.322, 0.639);
     vec3 c3 = vec3(0.282, 0.357, 0.710);
@@ -528,6 +755,8 @@ vec3 getTerrainColor(float value) {
     else color = colorInterpolate(c8, c9, v8, v9, value);
     
     return color;
+*/
+    return vec3(value);
 }
 
 // 简单的颜色映射函数

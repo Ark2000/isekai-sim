@@ -8,3 +8,10 @@
 
 - [Noise Generator](https://noisegen.bubblebirdstudio.com/)
 可以抄抄他们的噪声代码，无缝噪声，用来生成初始地形。
+
+# 相关技术
+
+## 波动方程、浅水方程， Shallow Water Equation (SWE)
+
+浅水方程假设水在垂直方向上的速度一样，也就是水很“浅”，这是一个重要的假设。详细可参考维基百科 https://en.wikipedia.org/wiki/Shallow_water_equations
+
