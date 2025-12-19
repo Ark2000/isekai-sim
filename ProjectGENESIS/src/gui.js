@@ -158,6 +158,20 @@ class Pane {
                     );
                     margin: 2px 0; opacity: 0.5;
                 }
+                
+                .genesis-tooltip {
+                    position: fixed; background: #aaa; color: #111;
+                    padding: 3px 6px; font-size: 9px; font-weight: bold;
+                    pointer-events: none; z-index: 10001;
+                    display: none; border: 1px solid #000;
+                    box-shadow: 3px 3px 0px rgba(0,0,0,0.5);
+                    max-width: 180px; white-space: pre-wrap;
+                    line-height: 1.2;
+                }
+                .has-hint {
+                    text-decoration: underline dotted #444;
+                    cursor: help;
+                }
             `;
             document.head.appendChild(style);
         }
@@ -173,6 +187,11 @@ class Pane {
         const deco = document.createElement('div');
         deco.className = 'genesis-deco-bar';
         this.element.appendChild(deco);
+
+        // Tooltip element
+        this.tooltip = document.createElement('div');
+        this.tooltip.className = 'genesis-tooltip';
+        document.body.appendChild(this.tooltip);
 
         this.container.appendChild(this.element);
     }
@@ -240,7 +259,7 @@ class Folder {
     
     addFolder(options = {}) { return new Folder(this.content, { ...options, depth: this.depth + 1, pane: this.pane }); }
     addBinding(obj, prop, options = {}) { 
-        const b = new Binding(this.content, obj, prop, options);
+        const b = new Binding(this.content, obj, prop, options, this.pane);
         if (this.pane) this.pane.bindings.push(b);
         return b;
     }
@@ -257,18 +276,44 @@ class Folder {
 }
 
 class Binding {
-    constructor(parent, obj, prop, options = {}) {
+    constructor(parent, obj, prop, options = {}, pane = null) {
         this.obj = obj; this.prop = prop; this.options = options;
         this.label = options.label || prop;
         this.readonly = options.readonly === true;
+        this.pane = pane;
         
         this.element = document.createElement('div');
         this.element.className = 'genesis-row';
         
         const label = document.createElement('label');
         label.className = 'genesis-label';
-        label.textContent = this.label;
+        
+        const labelText = document.createElement('span');
+        labelText.textContent = this.label;
+        if (options.hint) labelText.className = 'has-hint';
+        label.appendChild(labelText);
+        
         this.element.appendChild(label);
+        
+        if (options.hint && this.pane && this.pane.tooltip) {
+            let timer = null;
+            labelText.onmouseenter = (e) => {
+                timer = setTimeout(() => {
+                    const tooltip = this.pane.tooltip;
+                    tooltip.textContent = options.hint;
+                    tooltip.style.display = 'block';
+                    const rect = labelText.getBoundingClientRect();
+                    tooltip.style.left = (rect.left - 5) + 'px';
+                    tooltip.style.top = (rect.bottom + 5) + 'px';
+                }, 400);
+            };
+            labelText.onmouseleave = () => {
+                clearTimeout(timer);
+                if (this.pane && this.pane.tooltip) {
+                    this.pane.tooltip.style.display = 'none';
+                }
+            };
+        }
         
         const controlWrap = document.createElement('div');
         controlWrap.className = 'genesis-control';

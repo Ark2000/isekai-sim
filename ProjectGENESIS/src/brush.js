@@ -27,9 +27,18 @@ export function createBrush() {
     
     function setupGUI(guiFolder) {
         const folder = guiFolder.addFolder({ title: 'Brush', expanded: true });
-        folder.addBinding(brush, 'value', { min: 0, max: 1, step: 0.01, label: 'Value' });
-        folder.addBinding(brush, 'radius', { min: 1, max: 32, step: 1, label: 'Radius' });
-        folder.addBinding(brush, 'disturbance', { min: 0, max: 1, step: 0.01, label: 'Random' });
+        folder.addBinding(brush, 'value', { 
+            min: 0, max: 1, step: 0.01, label: 'Value',
+            hint: 'Strength or target value of the brush effect.'
+        });
+        folder.addBinding(brush, 'radius', { 
+            min: 1, max: 32, step: 1, label: 'Radius',
+            hint: 'Size of the brush area.'
+        });
+        folder.addBinding(brush, 'disturbance', { 
+            min: 0, max: 1, step: 0.01, label: 'Random',
+            hint: 'Randomness/noise applied to the brush stroke.'
+        });
     }
     
     return {

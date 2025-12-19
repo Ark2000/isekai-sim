@@ -203,40 +203,95 @@ export function createWorldLayer() {
             
             guiFolder.addBinding({ get brushTarget() { return brushTarget; }, set brushTarget(v) { brushTarget = v; } }, 'brushTarget', {
                 options: { 'Edit Terrain': 0, 'Edit Temperature': 1, 'Edit Cloud': 2, 'Edit Water': 4 },
-                label: 'Tool'
+                label: 'Tool',
+                hint: 'Select the layer to modify with the brush tool.'
             });
             
             const genFolder = guiFolder.addFolder({ title: 'Generator', expanded: false });
-            genFolder.addBinding({ get genScale() { return genScale; }, set genScale(v) { genScale = v; } }, 'genScale', { min: 0.1, max: 10.0, label: 'Scale' });
-            genFolder.addBinding({ get genSeed() { return genSeed; }, set genSeed(v) { genSeed = v; } }, 'genSeed', { label: 'Seed' });
+            genFolder.addBinding({ get genScale() { return genScale; }, set genScale(v) { genScale = v; } }, 'genScale', { 
+                min: 0.1, max: 10.0, label: 'Scale',
+                hint: 'Scale of the terrain generation noise. Smaller values result in larger features.'
+            });
+            genFolder.addBinding({ get genSeed() { return genSeed; }, set genSeed(v) { genSeed = v; } }, 'genSeed', { 
+                label: 'Seed',
+                hint: 'Random seed for terrain generation.'
+            });
             genFolder.addButton({ title: 'Generate Terrain' }).on('click', generateTerrain);
             
             brush.setupGUI(guiFolder);
-            guiFolder.addBinding({ get useTargetMode() { return useTargetMode; }, set useTargetMode(v) { useTargetMode = v; } }, 'useTargetMode', { label: 'Limit' });
-            guiFolder.addBinding({ get targetValue() { return targetValue; }, set targetValue(v) { targetValue = v; } }, 'targetValue', { min: 0, max: 1, step: 0.01, label: 'Limit Val' });
+            guiFolder.addBinding({ get useTargetMode() { return useTargetMode; }, set useTargetMode(v) { useTargetMode = v; } }, 'useTargetMode', { 
+                label: 'Limit',
+                hint: 'Enable to cap the brush effect at a specific target value.'
+            });
+            guiFolder.addBinding({ get targetValue() { return targetValue; }, set targetValue(v) { targetValue = v; } }, 'targetValue', { 
+                min: 0, max: 1, step: 0.01, label: 'Limit Val',
+                hint: 'The target value for the Limit mode.'
+            });
             guiFolder.addBlade({ view: 'separator' });
             
             const envFolder = guiFolder.addFolder({ title: 'Environment', expanded: false });
-            envFolder.addBinding(globalWind, 'x', { min: -2.0, max: 2.0, label: 'Wind X' });
-            envFolder.addBinding(globalWind, 'y', { min: -2.0, max: 2.0, label: 'Wind Y' });
+            envFolder.addBinding(globalWind, 'x', { 
+                min: -2.0, max: 2.0, label: 'Wind X',
+                hint: 'Horizontal global wind velocity.'
+            });
+            envFolder.addBinding(globalWind, 'y', { 
+                min: -2.0, max: 2.0, label: 'Wind Y',
+                hint: 'Vertical global wind velocity.'
+            });
             
             const physFolder = guiFolder.addFolder({ title: 'Physics Params', expanded: false });
             const cloudFolder = physFolder.addFolder({ title: 'Cloud Physics' });
-            cloudFolder.addBinding(simParams, 'cloudDecay', { min: 0.9, max: 1.0, step: 0.0001, label: 'Decay' });
-            cloudFolder.addBinding(simParams, 'rainThreshold', { min: 0.5, max: 1.0, label: 'Rain Thres' });
-            cloudFolder.addBinding(simParams, 'evaporation', { min: 0.0, max: 0.1, step: 0.001, label: 'Evap Rate' });
-            cloudFolder.addBinding(simParams, 'condensation', { min: 0.0, max: 0.1, step: 0.001, label: 'Cond Rate' });
+            cloudFolder.addBinding(simParams, 'cloudDecay', { 
+                min: 0.9, max: 1.0, step: 0.0001, label: 'Decay',
+                hint: 'How fast clouds dissipate over time.'
+            });
+            cloudFolder.addBinding(simParams, 'rainThreshold', { 
+                min: 0.5, max: 1.0, label: 'Rain Thres',
+                hint: 'Cloud density required to trigger rainfall.'
+            });
+            cloudFolder.addBinding(simParams, 'evaporation', { 
+                min: 0.0, max: 0.1, step: 0.001, label: 'Evap Rate',
+                hint: 'Rate at which surface water turns into clouds.'
+            });
+            cloudFolder.addBinding(simParams, 'condensation', { 
+                min: 0.0, max: 0.1, step: 0.001, label: 'Cond Rate',
+                hint: 'Rate at which atmospheric moisture turns into clouds.'
+            });
             const tempFolder = physFolder.addFolder({ title: 'Thermal Physics' });
-            tempFolder.addBinding(simParams, 'tempDiffusion', { min: 0.0, max: 0.1, step: 0.001, label: 'Diffusion' });
-            tempFolder.addBinding(simParams, 'tempInertia', { min: 0.9, max: 0.999, step: 0.001, label: 'Inertia' });
-            tempFolder.addBinding(simParams, 'thermalWind', { min: 0.0, max: 2.0, label: 'Thermal Wind' });
+            tempFolder.addBinding(simParams, 'tempDiffusion', { 
+                min: 0.0, max: 0.1, step: 0.001, label: 'Diffusion',
+                hint: 'How quickly temperature spreads to neighboring areas.'
+            });
+            tempFolder.addBinding(simParams, 'tempInertia', { 
+                min: 0.9, max: 0.999, step: 0.001, label: 'Inertia',
+                hint: 'Resistance to temperature changes.'
+            });
+            tempFolder.addBinding(simParams, 'thermalWind', { 
+                min: 0.0, max: 2.0, label: 'Thermal Wind',
+                hint: 'Strength of wind generated by temperature gradients.'
+            });
             const waterFolder = physFolder.addFolder({ title: 'Water Physics' });
-            waterFolder.addBinding(simParams, 'waterFlow', { min: 0.0, max: 1.0, step: 0.01, label: 'Flow Rate' });
-            waterFolder.addBinding(simParams, 'waterEvap', { min: 0.0, max: 0.01, step: 0.0001, label: 'Evaporation' });
+            waterFolder.addBinding(simParams, 'waterFlow', { 
+                min: 0.0, max: 1.0, step: 0.01, label: 'Flow Rate',
+                hint: 'Speed of water movement across the terrain.'
+            });
+            waterFolder.addBinding(simParams, 'waterEvap', { 
+                min: 0.0, max: 0.01, step: 0.0001, label: 'Evaporation',
+                hint: 'Rate of water loss to the atmosphere.'
+            });
             const erosionFolder = physFolder.addFolder({ title: 'Erosion' });
-            erosionFolder.addBinding(simParams, 'erosionRate', { min: 0.0, max: 0.01, step: 0.0001, label: 'Erosion Rate' });
-            erosionFolder.addBinding(simParams, 'depositionRate', { min: 0.0, max: 0.01, step: 0.0001, label: 'Deposition Rate' });
-            erosionFolder.addBinding(simParams, 'erosionStrength', { min: 0.0, max: 1.0, step: 0.01, label: 'Erosion Strength' });
+            erosionFolder.addBinding(simParams, 'erosionRate', { 
+                min: 0.0, max: 0.01, step: 0.0001, label: 'Erosion Rate',
+                hint: 'Rate at which flowing water picks up sediment.'
+            });
+            erosionFolder.addBinding(simParams, 'depositionRate', { 
+                min: 0.0, max: 0.01, step: 0.0001, label: 'Deposition Rate',
+                hint: 'Rate at which water drops sediment.'
+            });
+            erosionFolder.addBinding(simParams, 'erosionStrength', { 
+                min: 0.0, max: 1.0, step: 0.01, label: 'Erosion Strength',
+                hint: 'Overall impact of erosion on the terrain height.'
+            });
             
             const viewFolder = guiFolder.addFolder({ title: 'Layers Visibility', expanded: true });
             viewFolder.addLayerToggles([
