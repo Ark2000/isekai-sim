@@ -1,5 +1,22 @@
-// 轻量级 GUI 控制器 - 工业/硬核风格 (Industrial & Technical - Ultra Compact)
-// 单文件，无依赖，功能完整
+/**
+ * GENESIS-GUI v1.0
+ * ----------------
+ * 一个轻量级、零依赖、工业/硬核风格的 Web 调试 GUI 库。
+ * 专为 Project GENESIS 设计，支持实时参数绑定、监控与多图层管理。
+ * 
+ * 核心组件:
+ * - Pane: 主控制面板，支持自动注入样式。
+ * - Folder: 支持多级嵌套的折叠容器。
+ * - Binding: 双向数据绑定，支持数值(Slider)、布尔(Switch)、下拉菜单(Select)及只读监控。
+ * - Button: 触发式操作按钮。
+ * - LayerToggles: 紧凑的网格化图层可见性切换器。
+ * 
+ * 快速开始:
+ *   const gui = new Pane();
+ *   const folder = gui.addFolder({ title: 'Physics' });
+ *   folder.addBinding(obj, 'speed', { min: 0, max: 10, step: 0.1 });
+ *   folder.addButton({ title: 'Reset' }).on('click', () => reset());
+ */
 
 class Pane {
     constructor(options = {}) {

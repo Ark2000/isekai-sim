@@ -24,6 +24,10 @@ export function createEditor() {
     
     // GUI 设置
     const guiFolder = gui.addFolder({ title: 'Terrain Editor' });
+    
+    const viewportFolder = guiFolder.addFolder({ title: 'Viewport', expanded: false });
+    viewportFolder.addButton({ title: 'Reset Viewport' }).on('click', () => viewport.reset());
+
     const perfFolder = guiFolder.addFolder({ title: 'Performance', expanded: true });
     
     // 监控数据

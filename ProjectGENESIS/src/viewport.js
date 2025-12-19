@@ -1,14 +1,27 @@
 import { CANVAS_W, CANVAS_H } from './config.js';
 
 export function createViewport(container) {
-    let scale = 1.0;
-    let panX = (window.innerWidth - CANVAS_W) / 2;
-    let panY = (window.innerHeight - CANVAS_H) / 2;
+    const STORAGE_KEY = 'genesis_viewport';
+    
+    // 尝试加载持久化状态
+    const savedState = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+    
+    let scale = savedState?.scale ?? 1.0;
+    let panX = savedState?.panX ?? (window.innerWidth - CANVAS_W) / 2;
+    let panY = savedState?.panY ?? (window.innerHeight - CANVAS_H) / 2;
+    
+    function saveState() {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ scale, panX, panY }));
+    }
     
     function updateTransform() {
         container.style.transformOrigin = '0 0';
         container.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+        saveState();
     }
+    
+    // 初始化时应用一次变换
+    updateTransform();
     
     function zoom(delta, mouseX, mouseY) {
         const zoomSensitivity = 0.001;
@@ -35,12 +48,20 @@ export function createViewport(container) {
         };
     }
     
+    function reset() {
+        scale = 1.0;
+        panX = (window.innerWidth - CANVAS_W) / 2;
+        panY = (window.innerHeight - CANVAS_H) / 2;
+        updateTransform();
+    }
+    
     return {
         get scale() { return scale; },
         get panX() { return panX; },
         get panY() { return panY; },
         zoom,
         pan,
+        reset,
         screenToWorld,
         updateTransform
     };
