@@ -26,11 +26,28 @@ window.GenesisDebug = {
             shaderVersion: gl.getParameter(gl.SHADING_LANGUAGE_VERSION),
             maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE),
             maxDrawBuffers: gl.getParameter(gl.MAX_DRAW_BUFFERS),
+            maxColorAttachments: gl.getParameter(gl.MAX_COLOR_ATTACHMENTS),
+            maxTextureImageUnits: gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS),
+            maxCombinedTextureImageUnits: gl.getParameter(gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS),
             currentFPS: window.editor.currentFPS,
             targetFPS: window.editor.targetFPS
         };
         
         console.table(info);
+        
+        // 计算容量
+        const currentTextures = 4;
+        const maxTextures = info.maxDrawBuffers;
+        const currentData = currentTextures * 4;
+        const maxData = maxTextures * 4;
+        const availableData = maxData - currentData;
+        
+        console.log('\n📊 数据容量分析:');
+        console.log(`当前使用: ${currentTextures}张纹理 × 4通道 = ${currentData}个float/像素`);
+        console.log(`GPU支持: ${maxTextures}张纹理 × 4通道 = ${maxData}个float/像素`);
+        console.log(`剩余容量: ${maxTextures - currentTextures}张纹理 × 4通道 = ${availableData}个float/像素`);
+        console.log(`\n💡 建议: ${maxTextures >= 8 ? '可以安全扩展到8张纹理' : '保持4张纹理，优化通道使用'}`);
+        
         return info;
     },
     
