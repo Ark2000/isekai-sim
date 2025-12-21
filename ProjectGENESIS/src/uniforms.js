@@ -2,7 +2,7 @@
 
 export function setSimUniforms(gl, program, params) {
     const { brush, brushPos, brushMode, isBrushing, useTargetMode, targetValue, 
-            globalWind, simParams, brushTarget, TEXTURE_COUNT, textures } = params;
+            globalWind, simParams, brushTarget, TEXTURE_COUNT, textures, simPass } = params;
     
     // 纹理
     for(let i = 0; i < TEXTURE_COUNT; i++) {
@@ -10,6 +10,9 @@ export function setSimUniforms(gl, program, params) {
         gl.bindTexture(gl.TEXTURE_2D, textures.read[i]);
         gl.uniform1i(gl.getUniformLocation(program, `u_tex${i}`), i);
     }
+    
+    // Pass 控制
+    gl.uniform1i(gl.getUniformLocation(program, 'u_simPass'), simPass || 0);
     
     // 笔刷
     gl.uniform2f(gl.getUniformLocation(program, 'u_brushPos'), brushPos.x, 1.0 - brushPos.y);
@@ -26,6 +29,15 @@ export function setSimUniforms(gl, program, params) {
     // 环境
     gl.uniform2f(gl.getUniformLocation(program, 'u_globalWind'), globalWind.x, globalWind.y);
     
+    // SWE 参数 (from reference implementation)
+    gl.uniform1f(gl.getUniformLocation(program, 'u_gravity'), simParams.gravity);
+    gl.uniform1f(gl.getUniformLocation(program, 'u_gridSize'), simParams.gridSize);
+    gl.uniform1f(gl.getUniformLocation(program, 'u_deltaTime'), simParams.deltaTime);
+    gl.uniform1f(gl.getUniformLocation(program, 'u_dampingAlpha'), simParams.dampingAlpha);
+    gl.uniform1f(gl.getUniformLocation(program, 'u_dampingBeta'), simParams.dampingBeta);
+    gl.uniform1f(gl.getUniformLocation(program, 'u_waterSpeedMultiplier'), simParams.waterSpeedMultiplier);
+    gl.uniform1f(gl.getUniformLocation(program, 'u_waterDamping'), simParams.waterDamping);
+    
     // 物理参数
     gl.uniform1f(gl.getUniformLocation(program, 'u_cloudDecay'), simParams.cloudDecay);
     gl.uniform1f(gl.getUniformLocation(program, 'u_rainThreshold'), simParams.rainThreshold);
@@ -34,16 +46,20 @@ export function setSimUniforms(gl, program, params) {
     gl.uniform1f(gl.getUniformLocation(program, 'u_tempDiffusion'), simParams.tempDiffusion);
     gl.uniform1f(gl.getUniformLocation(program, 'u_tempInertia'), simParams.tempInertia);
     gl.uniform1f(gl.getUniformLocation(program, 'u_thermalWind'), simParams.thermalWind);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_waterFlow'), simParams.waterFlow);
     gl.uniform1f(gl.getUniformLocation(program, 'u_waterEvap'), simParams.waterEvap);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_waterFriction'), simParams.waterFriction);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_waterSoftening'), simParams.waterSoftening);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_waterSmoothing'), simParams.waterSmoothing);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_erosionRate'), simParams.erosionRate);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_depositionRate'), simParams.depositionRate);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_erosionStrength'), simParams.erosionStrength);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_talusRate'), simParams.talusRate);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_talusThreshold'), simParams.talusThreshold);
+    
+    // Old water physics parameters (removed, now handled by SWE)
+    // gl.uniform1f(gl.getUniformLocation(program, 'u_waterFlow'), simParams.waterFlow);
+    // gl.uniform1f(gl.getUniformLocation(program, 'u_waterFriction'), simParams.waterFriction);
+    // gl.uniform1f(gl.getUniformLocation(program, 'u_waterSoftening'), simParams.waterSoftening);
+    // gl.uniform1f(gl.getUniformLocation(program, 'u_waterSmoothing'), simParams.waterSmoothing);
+    
+    // Erosion parameters (disabled)
+    // gl.uniform1f(gl.getUniformLocation(program, 'u_erosionRate'), simParams.erosionRate);
+    // gl.uniform1f(gl.getUniformLocation(program, 'u_depositionRate'), simParams.depositionRate);
+    // gl.uniform1f(gl.getUniformLocation(program, 'u_erosionStrength'), simParams.erosionStrength);
+    // gl.uniform1f(gl.getUniformLocation(program, 'u_talusRate'), simParams.talusRate);
+    // gl.uniform1f(gl.getUniformLocation(program, 'u_talusThreshold'), simParams.talusThreshold);
 }
 
 export function setDisplayUniforms(gl, program, params) {

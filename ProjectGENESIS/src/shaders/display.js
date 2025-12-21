@@ -1,15 +1,15 @@
 /**
- * World Visualization Shader
- * Composites multiple layers (Terrain, Water, Temp, Clouds, Wind) for rendering.
+ * World Visualization Shader (Enhanced with SWE reference rendering)
+ * Beautiful water rendering inspired by Shadertoy SWE implementation
  */
 export const WORLD_DISPLAY_FS = /* glsl */ `#version 300 es
-precision mediump float;
+precision highp float;
 in vec2 v_uv;
 
-uniform sampler2D u_tex0;
-uniform sampler2D u_tex1;
-uniform sampler2D u_tex2;
-uniform sampler2D u_tex3;
+uniform sampler2D u_tex0; // Terrain
+uniform sampler2D u_tex1; // Temperature
+uniform sampler2D u_tex2; // Wind/Cloud
+uniform sampler2D u_tex3; // Water
 
 uniform bool u_showHeight;
 uniform bool u_showTemp;
@@ -20,16 +20,90 @@ uniform bool u_showWater;
 
 out vec4 outColor;
 
-vec3 colorInterpolate(vec3 c1, vec3 c2, float v1, float v2, float value) {
-    return mix(c1, c2, (value - v1) / (v2 - v1));
-}
+// Gamma correction (from reference)
+#define Gamma(v) pow(v, vec3(2.2))
+#define DeGamma(v) pow(v, vec3(1.0/2.2))
 
-vec3 getTerrainColor(float value) {
-    return vec3(value);
-}
+// Beautiful colors (inspired by reference)
+const vec3 vWaterFogColor = Gamma(vec3(0.9, 0.4, 0.3)) * 16.0;
+const vec3 vFoamColor = Gamma(vec3(0.9, 0.9, 0.85));
+const vec3 vSkyColor = Gamma(vec3(0.01, 0.4, 0.8));
+const vec3 vSunColor = Gamma(vec3(1.0, 0.8, 0.5));
+const vec3 vTerrainColor0 = Gamma(vec3(1.0, 0.88, 0.7) * 0.8);
+const vec3 vTerrainColor1 = Gamma(vec3(0.9, 0.9, 0.8) * 0.9);
+const vec3 vLightDir = normalize(vec3(0.0, 0.21, -1.0));
+const vec3 vLookDir = vec3(0.0, 0.0, -1.0);
+const float g_fGridSizeInMeter = 5.0;
 
 vec3 heatMap(float v) {
     return mix(vec3(0,0,1), vec3(1,0,0), v);
+}
+
+vec3 renderWater(vec2 uv, vec4 d0, vec4 d3, vec2 pixelSize, vec3 terrainColor) {
+    float terrainHeight = d0.r;
+    float waterDepth = d3.r;
+    
+    // Sample neighbors for normal calculation
+    vec4 vTexL = texture(u_tex3, uv + vec2(-pixelSize.x, 0));
+    vec4 vTexR = texture(u_tex3, uv + vec2(pixelSize.x, 0));
+    vec4 vTexT = texture(u_tex3, uv + vec2(0, -pixelSize.y));
+    vec4 vTexB = texture(u_tex3, uv + vec2(0, pixelSize.y));
+    
+    vec4 landL = texture(u_tex0, uv + vec2(-pixelSize.x, 0));
+    vec4 landR = texture(u_tex0, uv + vec2(pixelSize.x, 0));
+    vec4 landT = texture(u_tex0, uv + vec2(0, -pixelSize.y));
+    vec4 landB = texture(u_tex0, uv + vec2(0, pixelSize.y));
+    
+    // Total surface height = terrain + water
+    float hC = waterDepth + terrainHeight;
+    float hL = vTexL.r + landL.r;
+    float hR = vTexR.r + landR.r;
+    float hT = vTexT.r + landT.r;
+    float hB = vTexB.r + landB.r;
+    
+    // Calculate water surface normal (key for reflections/refractions)
+    vec3 vNormal = vec3((hR - hL) * g_fGridSizeInMeter, (hB - hT) * g_fGridSizeInMeter, 2.0);
+    vNormal = normalize(vNormal);
+    
+    // Refraction: distort terrain UV based on water surface normal
+    vec2 vRefractUV = uv - vNormal.xy * waterDepth * 6.0;
+    
+    // Use the passed-in terrain color (which is already grayscale)
+    vec3 vTerrainColor = terrainColor;
+    
+    // Apply depth-based darkening to terrain
+    float fMaxZ = max(max(max(waterDepth, vTexL.r), vTexR.r), max(vTexT.r, vTexB.r));
+    vTerrainColor *= 1.0 - min(1.0, fMaxZ * 80.0) * 0.2;
+    
+    // Water fog (volumetric effect in deep water)
+    vec4 vTexCRefract = texture(u_tex3, vRefractUV);
+    vec3 vFog = 1.0 - exp(-vTexCRefract.rrr / (vNormal.z * 0.9999) * vWaterFogColor);
+    vec3 vRefract = vTerrainColor * (1.0 - vFog);
+    
+    // Sky reflection (Fresnel-like effect)
+    vec3 vReflect = pow((1.0 - pow(vNormal.z * 0.9999999, 100.0)), 0.4) * 1.1 * vSkyColor;
+    
+    // Specular highlights (sun reflection)
+    vec3 vHalfVec = normalize(vLookDir + vLightDir);
+    float fHdotN = max(0.0, dot(-vHalfVec, vNormal));
+    vReflect += pow(fHdotN, 1200.0) * 20.0 * vSunColor; // Sharp highlight
+    vReflect += pow(fHdotN, 180.0) * 0.5 * vSkyColor;   // Soft glow
+    
+    // Lighting on water surface
+    float fLight = pow(max(dot(vNormal, -vLightDir), 0.0), 10.0);
+    
+    // Foam in shallow water
+    float fMinZ = min(min(min(waterDepth, vTexL.r), vTexR.r), min(vTexT.r, vTexB.r));
+    float fFoam = max(0.0, 1.0 - fMinZ * 8.0) * 0.3;
+    
+    // Combine refraction (underwater) + reflection (surface)
+    vec3 vWater = mix(vRefract * fLight + vReflect, vFoamColor, fFoam);
+    
+    // Alpha blending with terrain
+    float fAlpha = min(1.0, waterDepth * 130.0);
+    vec3 vOut = mix(vTerrainColor * fLight, vWater, fAlpha);
+    
+    return vOut;
 }
     
 void main() {
@@ -38,14 +112,20 @@ void main() {
     vec4 d2 = texture(u_tex2, v_uv);
     vec4 d3 = texture(u_tex3, v_uv);
     
+    vec2 pixelSize = 1.0 / vec2(textureSize(u_tex0, 0));
+    
     vec3 finalColor = vec3(0.0);
     
     if (u_showHeight) {
         float h = d0.r;
-        finalColor = getTerrainColor(h);
+        
+        // 简单策略：直接显示，但clamp到可见范围
+        // 这样生成的地形（0-1）看起来正常
+        // 笔刷堆高的部分（>1）会显示为白色
+        // 负高度（<0）会显示为黑色
+        finalColor = vec3(clamp(h, 0.0, 1.0));
         
         if (u_showHillshade) {
-            vec2 pixelSize = 1.0 / vec2(textureSize(u_tex0, 0));
             float hL = texture(u_tex0, v_uv + vec2(-pixelSize.x, 0)).r;
             float hR = texture(u_tex0, v_uv + vec2(pixelSize.x, 0)).r;
             float hD = texture(u_tex0, v_uv + vec2(0, -pixelSize.y)).r;
@@ -57,18 +137,10 @@ void main() {
         }
     }
     
-    if (u_showWater) {
-        float waterDepth = d3.r;
-        if (waterDepth > 0.0001) {
-            // 使用更自然的深浅水混合
-            vec3 deepWater = vec3(0.05, 0.15, 0.45);
-            vec3 shallowWater = vec3(0.4, 0.7, 1.0);
-            vec3 waterColor = mix(shallowWater, deepWater, smoothstep(0.0, 0.4, waterDepth));
-            
-            // 使用更平滑的 Alpha 过渡，消除颗粒感
-            float alpha = smoothstep(0.0, 0.08, waterDepth) * 0.75;
-            finalColor = mix(finalColor, waterColor, alpha);
-        }
+    // Enhanced water rendering (from reference)
+    // Pass the grayscale terrain color to water rendering
+    if (u_showWater && d3.r > 0.0001) {
+        finalColor = renderWater(v_uv, d0, d3, pixelSize, finalColor);
     }
     
     if (u_showTemp) {
@@ -88,6 +160,7 @@ void main() {
         finalColor = (u_showHeight || u_showTemp || u_showCloud) ? mix(finalColor, windColor, 0.4) : windColor;
     }
     
-    outColor = vec4(finalColor, 1.0);
+    // Gamma correction for more realistic colors
+    outColor = vec4(DeGamma(finalColor), 1.0);
 }
 `;

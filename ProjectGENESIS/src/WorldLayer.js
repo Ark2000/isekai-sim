@@ -36,6 +36,16 @@ export function createWorldLayer() {
     
     // 物理模拟参数
     const simParams = {
+        // SWE Parameters (from reference implementation)
+        gravity: 10.0,
+        gridSize: 5.0,
+        deltaTime: 1.0,
+        dampingAlpha: 0.5,
+        dampingBeta: 2.0,
+        waterSpeedMultiplier: 1.0,  // 内部值：会被百分比转换（0.01-1.0）
+        waterSpeedPercent: 100,     // UI显示：百分比（1-100）
+        waterDamping: 0.98,         // ✅ 速度衰减（摩擦）：0.9=快速停止，0.99=缓慢停止，1.0=永动机
+        // Original parameters
         cloudDecay: 0.999,
         rainThreshold: 0.9,
         evaporation: 0.01,
@@ -43,16 +53,13 @@ export function createWorldLayer() {
         tempDiffusion: 0.01,
         tempInertia: 0.995,
         thermalWind: 0.5,
-        waterFlow: 0.2,
         waterEvap: 0.0001,
-        waterFriction: 0.92,
-        waterSoftening: 1.2,
-        waterSmoothing: 0.2,
-        erosionRate: 0.001,
-        depositionRate: 0.0005,
-        erosionStrength: 0.1,
-        talusRate: 0.01,
-        talusThreshold: 0.01
+        // Erosion (disabled for now)
+        // erosionRate: 0.001,
+        // depositionRate: 0.0005,
+        // erosionStrength: 0.1,
+        // talusRate: 0.01,
+        // talusThreshold: 0.01
     };
     
     // 可视化开关
@@ -178,21 +185,58 @@ export function createWorldLayer() {
         },
         
         render() {
-            // 物理模拟 Pass
+            // Multi-Pass SWE Simulation
+            // Pass 0: Velocity Integration (Pressure -> Velocity)
             gl.useProgram(programs.sim);
             setSimUniforms(gl, programs.sim, {
                 brush, brushPos, brushMode, isBrushing, useTargetMode, targetValue,
-                globalWind, simParams, brushTarget, TEXTURE_COUNT, textures
+                globalWind, simParams, brushTarget, TEXTURE_COUNT, textures,
+                simPass: 0 // Pass 0
             });
-            
             gl.bindFramebuffer(gl.FRAMEBUFFER, fbos.write);
             gl.viewport(0, 0, W, H);
             drawQuad(gl, programs.sim, quadBuffer);
-            
             swap();
+            
+            // Pass 1: Height Integration (Velocity -> Water Depth)
+            gl.useProgram(programs.sim);
+            setSimUniforms(gl, programs.sim, {
+                brush, brushPos, brushMode, isBrushing: false, useTargetMode, targetValue,
+                globalWind, simParams, brushTarget, TEXTURE_COUNT, textures,
+                simPass: 1 // Pass 1
+            });
+            gl.bindFramebuffer(gl.FRAMEBUFFER, fbos.write);
+            gl.viewport(0, 0, W, H);
+            drawQuad(gl, programs.sim, quadBuffer);
+            swap();
+            
+            // Pass 2: Erosion & Sediment Transport
+            gl.useProgram(programs.sim);
+            setSimUniforms(gl, programs.sim, {
+                brush, brushPos, brushMode, isBrushing: false, useTargetMode, targetValue,
+                globalWind, simParams, brushTarget, TEXTURE_COUNT, textures,
+                simPass: 2 // Pass 2
+            });
+            gl.bindFramebuffer(gl.FRAMEBUFFER, fbos.write);
+            gl.viewport(0, 0, W, H);
+            drawQuad(gl, programs.sim, quadBuffer);
+            swap();
+            
+            // Pass 3: Atmosphere (Wind, Cloud, Temperature)
+            gl.useProgram(programs.sim);
+            setSimUniforms(gl, programs.sim, {
+                brush, brushPos, brushMode, isBrushing: false, useTargetMode, targetValue,
+                globalWind, simParams, brushTarget, TEXTURE_COUNT, textures,
+                simPass: 3 // Pass 3
+            });
+            gl.bindFramebuffer(gl.FRAMEBUFFER, fbos.write);
+            gl.viewport(0, 0, W, H);
+            drawQuad(gl, programs.sim, quadBuffer);
+            swap();
+            
             isBrushing = false;
             
-            // 显示 Pass
+            // Display Pass
             gl.bindFramebuffer(gl.FRAMEBUFFER, null);
             gl.viewport(0, 0, canvas.width, canvas.height);
             gl.useProgram(programs.display);
@@ -245,6 +289,43 @@ export function createWorldLayer() {
             });
             
             const physFolder = guiFolder.addFolder({ title: 'Physics Params', expanded: false });
+            const sweFolder = physFolder.addFolder({ title: 'SWE (Shallow Water)' });
+            const speedBinding = sweFolder.addBinding(simParams, 'waterSpeedPercent', { 
+                min: 1, max: 100, step: 1, label: 'Water Speed %',
+                hint: '🌊 Water flow speed: 100% = normal, 1% = super slow (SAFE!)'
+            });
+            // 监听变化，转换为内部值（1-100% → 0.01-1.0）
+            speedBinding.on('change', (ev) => {
+                simParams.waterSpeedMultiplier = ev.value / 100.0;
+            });
+            
+            sweFolder.addBinding(simParams, 'waterDamping', { 
+                min: 0.90, max: 1.0, step: 0.01, label: 'Water Damping',
+                hint: '🛑 Friction/energy loss: 0.90=quick stop, 0.99=slow stop, 1.0=forever (SAFE!)'
+            });
+            
+            // Advanced parameters (can cause instability if changed)
+            const advancedFolder = sweFolder.addFolder({ title: '⚠️ Advanced (Danger!)', expanded: false });
+            advancedFolder.addBinding(simParams, 'gravity', { 
+                min: 1.0, max: 20.0, step: 0.1, label: '⚠️ Gravity',
+                hint: '⚠️ WARNING: Changing this can break stability!'
+            });
+            advancedFolder.addBinding(simParams, 'gridSize', { 
+                min: 1.0, max: 10.0, step: 0.1, label: '⚠️ Grid Size',
+                hint: '⚠️ WARNING: Changing this can break stability!'
+            });
+            advancedFolder.addBinding(simParams, 'deltaTime', { 
+                min: 0.1, max: 2.0, step: 0.1, label: '⚠️ Time Step',
+                hint: '⚠️ WARNING: Changing this can break stability!'
+            });
+            advancedFolder.addBinding(simParams, 'dampingAlpha', { 
+                min: 0.1, max: 1.0, step: 0.05, label: '⚠️ Velocity Damp',
+                hint: '⚠️ WARNING: Changing this can break stability!'
+            });
+            advancedFolder.addBinding(simParams, 'dampingBeta', { 
+                min: 1.0, max: 5.0, step: 0.1, label: '⚠️ Overshoot Damp',
+                hint: '⚠️ WARNING: Changing this can break stability!'
+            });
             const cloudFolder = physFolder.addFolder({ title: 'Cloud Physics' });
             cloudFolder.addBinding(simParams, 'cloudDecay', { 
                 min: 0.9, max: 1.0, step: 0.0001, label: 'Decay',
@@ -276,26 +357,12 @@ export function createWorldLayer() {
                 hint: 'Strength of wind generated by temperature gradients.'
             });
             const waterFolder = physFolder.addFolder({ title: 'Water Physics' });
-            waterFolder.addBinding(simParams, 'waterFlow', { 
-                min: 0.0, max: 1.0, step: 0.01, label: 'Flow Rate',
-                hint: 'Speed of water movement across the terrain.'
-            });
             waterFolder.addBinding(simParams, 'waterEvap', { 
                 min: 0.0, max: 0.01, step: 0.0001, label: 'Evaporation',
                 hint: 'Rate of water loss to the atmosphere.'
             });
-            waterFolder.addBinding(simParams, 'waterFriction', { 
-                min: 0.5, max: 0.99, step: 0.01, label: 'Inertia',
-                hint: 'Water momentum retention. Higher values make water flow further.'
-            });
-            waterFolder.addBinding(simParams, 'waterSoftening', { 
-                min: 1.0, max: 2.0, step: 0.1, label: 'Softening',
-                hint: 'Reduces ripples on flat surfaces. Higher values make water calmer.'
-            });
-            waterFolder.addBinding(simParams, 'waterSmoothing', { 
-                min: 0.0, max: 0.5, step: 0.01, label: 'Smoothing',
-                hint: 'Laplacian smoothing to prevent checkerboard artifacts.'
-            });
+            // Erosion folder removed - disabled for now
+            /*
             const erosionFolder = physFolder.addFolder({ title: 'Erosion' });
             erosionFolder.addBinding(simParams, 'erosionRate', { 
                 min: 0.0, max: 0.01, step: 0.0001, label: 'Erosion Rate',
@@ -317,6 +384,7 @@ export function createWorldLayer() {
                 min: 0.0, max: 0.01, step: 0.0001, label: 'Talus Thres',
                 hint: 'Slope threshold for thermal erosion.'
             });
+            */
             
             const viewFolder = guiFolder.addFolder({ title: 'Layers Visibility', expanded: true });
             viewFolder.addLayerToggles([

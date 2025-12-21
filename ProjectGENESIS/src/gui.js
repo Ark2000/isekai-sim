@@ -384,7 +384,17 @@ class Binding {
         parent.appendChild(this.element);
     }
     getValue() { return this.obj[this.prop]; }
-    setValue(v) { this.obj[this.prop] = v; }
+    setValue(v) { 
+        this.obj[this.prop] = v; 
+        // 触发change事件
+        if (this.changeCallback) {
+            this.changeCallback({ value: v });
+        }
+    }
+    on(evt, cb) { 
+        if (evt === 'change') this.changeCallback = cb; 
+        return this; 
+    }
     formatValue(v) {
         if (typeof v === 'number') {
             const formatted = v.toFixed(2).replace(/\.?0+$/, '');
