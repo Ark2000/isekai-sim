@@ -69,11 +69,78 @@ export function createWorldLayer() {
     let showWind = false;
     let showHillshade = true;
     let showWater = true;
+    let showPixelData = true;
     
     let canvas, quadBuffer, guiFolder;
+    let pixelTooltip = null;
+    let lastMouseX = -1;
+    let lastMouseY = -1;
+    let mouseHoverTimeout = null;
     
     function initGpu() {
         canvas = createCanvas();
+        
+        // 创建像素数据显示tooltip
+        pixelTooltip = document.createElement('div');
+        pixelTooltip.id = 'genesis-pixel-tooltip';
+        pixelTooltip.style.cssText = `
+            position: fixed;
+            background: rgba(17, 17, 17, 0.95);
+            color: #ccc;
+            padding: 6px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 10px;
+            pointer-events: none;
+            z-index: 9999;
+            border: 1px solid #666;
+            line-height: 1.4;
+            white-space: pre;
+            display: none;
+        `;
+        document.body.appendChild(pixelTooltip);
+        
+        // 监听鼠标移动 - 绑定到主canvas（#terrainCanvas）
+        const mainCanvas = document.getElementById('terrainCanvas');
+        if (mainCanvas) {
+            mainCanvas.addEventListener('mousemove', (e) => {
+                if (!showPixelData) {
+                    pixelTooltip.style.display = 'none';
+                    return;
+                }
+                
+                const rect = mainCanvas.getBoundingClientRect();
+                lastMouseX = Math.floor((e.clientX - rect.left) * (W / rect.width));
+                lastMouseY = Math.floor((e.clientY - rect.top) * (H / rect.height));
+                
+                // 翻转Y坐标（WebGL坐标系）
+                lastMouseY = H - 1 - lastMouseY;
+                
+                // 更新tooltip位置
+                pixelTooltip.style.left = (e.clientX + 15) + 'px';
+                pixelTooltip.style.top = (e.clientY + 15) + 'px';
+                
+                // 延迟300ms显示tooltip，避免快速移动时闪烁
+                if (mouseHoverTimeout) {
+                    clearTimeout(mouseHoverTimeout);
+                }
+                mouseHoverTimeout = setTimeout(() => {
+                    pixelTooltip.style.display = 'block';
+                }, 300);
+            });
+            
+            mainCanvas.addEventListener('mouseleave', () => {
+                if (mouseHoverTimeout) {
+                    clearTimeout(mouseHoverTimeout);
+                    mouseHoverTimeout = null;
+                }
+                pixelTooltip.style.display = 'none';
+                lastMouseX = -1;
+                lastMouseY = -1;
+            });
+        } else {
+            console.error('Main canvas (#terrainCanvas) not found!');
+        }
+        
         const glContext = canvas.getContext('webgl2', { premultipliedAlpha: false });
         if (!glContext) {
             console.error('WebGL 2 not supported');
@@ -116,6 +183,11 @@ export function createWorldLayer() {
     }
     
     gl = initGpu();
+    
+    // 初始化时自动生成地形
+    if (gl) {
+        generateTerrain();
+    }
     
     function swap() {
         let temp = textures.read;
@@ -177,6 +249,57 @@ export function createWorldLayer() {
         
         generateTerrain,
         
+        updatePixelData() {
+            if (!showPixelData || lastMouseX < 0 || lastMouseY < 0 || 
+                lastMouseX >= W || lastMouseY >= H || !pixelTooltip) {
+                return;
+            }
+            
+            try {
+                // 读取4个纹理的像素数据
+                const pixelData = [];
+                const tempBuffer = new Float32Array(4);
+                
+                // 保存当前状态
+                const currentFBO = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+                
+                // 绑定read framebuffer来读取数据
+                gl.bindFramebuffer(gl.FRAMEBUFFER, fbos.read);
+                
+                for (let i = 0; i < TEXTURE_COUNT; i++) {
+                    gl.readBuffer(gl.COLOR_ATTACHMENT0 + i);
+                    gl.readPixels(lastMouseX, lastMouseY, 1, 1, gl.RGBA, gl.FLOAT, tempBuffer);
+                    pixelData.push(Array.from(tempBuffer));
+                }
+                
+                // 恢复framebuffer状态
+                gl.bindFramebuffer(gl.FRAMEBUFFER, currentFBO);
+                
+                // 格式化显示
+                const lines = [
+                    `Pos: (${lastMouseX}, ${H - 1 - lastMouseY})`,
+                    ``,
+                    `T0: Height=${pixelData[0][0].toFixed(3)}`,
+                    ``,
+                    `T1: Temp=${pixelData[1][0].toFixed(3)}`,
+                    ``,
+                    `T2: WindX=${pixelData[2][0].toFixed(3)}`,
+                    `    WindY=${pixelData[2][1].toFixed(3)}`,
+                    `    Cloud=${pixelData[2][2].toFixed(3)}`,
+                    `    Vapor=${pixelData[2][3].toFixed(3)}`,
+                    ``,
+                    `T3: WaterDepth=${pixelData[3][0].toFixed(3)}`,
+                    `    Sediment=${pixelData[3][1].toFixed(3)}`,
+                    `    VelX=${pixelData[3][2].toFixed(3)}`,
+                    `    VelY=${pixelData[3][3].toFixed(3)}`
+                ];
+                
+                pixelTooltip.textContent = lines.join('\n');
+            } catch (error) {
+                console.error('Failed to read pixel data:', error);
+            }
+        },
+        
         applyBrush(cx, cy, isAdditive) {
             isBrushing = true;
             brushPos.x = (cx + brush.radius) / W;
@@ -235,6 +358,9 @@ export function createWorldLayer() {
             swap();
             
             isBrushing = false;
+            
+            // 更新像素数据显示（在切换到显示Pass之前读取）
+            this.updatePixelData();
             
             // Display Pass
             gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -425,6 +551,20 @@ export function createWorldLayer() {
                     setValue: (v) => { showWind = v; }
                 }
             ]);
+            
+            guiFolder.addBlade({ view: 'separator' });
+            guiFolder.addBinding({ 
+                get showPixelData() { return showPixelData; }, 
+                set showPixelData(v) { 
+                    showPixelData = v; 
+                    if (!v && pixelTooltip) {
+                        pixelTooltip.style.display = 'none';
+                    }
+                } 
+            }, 'showPixelData', { 
+                label: 'Pixel Data',
+                hint: 'Show texture values under cursor'
+            });
         }
     };
 }
