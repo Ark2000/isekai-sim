@@ -36,9 +36,14 @@ export function setSimUniforms(gl, program, params) {
     gl.uniform1f(gl.getUniformLocation(program, 'u_thermalWind'), simParams.thermalWind);
     gl.uniform1f(gl.getUniformLocation(program, 'u_waterFlow'), simParams.waterFlow);
     gl.uniform1f(gl.getUniformLocation(program, 'u_waterEvap'), simParams.waterEvap);
+    gl.uniform1f(gl.getUniformLocation(program, 'u_waterFriction'), simParams.waterFriction);
+    gl.uniform1f(gl.getUniformLocation(program, 'u_waterSoftening'), simParams.waterSoftening);
+    gl.uniform1f(gl.getUniformLocation(program, 'u_waterSmoothing'), simParams.waterSmoothing);
     gl.uniform1f(gl.getUniformLocation(program, 'u_erosionRate'), simParams.erosionRate);
     gl.uniform1f(gl.getUniformLocation(program, 'u_depositionRate'), simParams.depositionRate);
     gl.uniform1f(gl.getUniformLocation(program, 'u_erosionStrength'), simParams.erosionStrength);
+    gl.uniform1f(gl.getUniformLocation(program, 'u_talusRate'), simParams.talusRate);
+    gl.uniform1f(gl.getUniformLocation(program, 'u_talusThreshold'), simParams.talusThreshold);
 }
 
 export function setDisplayUniforms(gl, program, params) {

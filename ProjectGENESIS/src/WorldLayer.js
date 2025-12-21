@@ -2,7 +2,7 @@ import { createCanvas } from './utils.js';
 import { createBrush } from './brush.js';
 import { W, H } from './config.js';
 import { createTexture, createMRTFramebuffer, createProgram, FULLSCREEN_QUAD_VS } from './GLUtils.js';
-import { WORLD_SIM_FS, WORLD_DISPLAY_FS, WORLD_GEN_FS } from './shaders.js';
+import { WORLD_SIM_FS, WORLD_DISPLAY_FS, WORLD_GEN_FS } from './shaders/index.js';
 import { setSimUniforms, setDisplayUniforms, drawQuad } from './uniforms.js';
 
 export function createWorldLayer() {
@@ -45,9 +45,14 @@ export function createWorldLayer() {
         thermalWind: 0.5,
         waterFlow: 0.2,
         waterEvap: 0.0001,
+        waterFriction: 0.92,
+        waterSoftening: 1.2,
+        waterSmoothing: 0.2,
         erosionRate: 0.001,
         depositionRate: 0.0005,
-        erosionStrength: 0.1
+        erosionStrength: 0.1,
+        talusRate: 0.01,
+        talusThreshold: 0.01
     };
     
     // 可视化开关
@@ -279,6 +284,18 @@ export function createWorldLayer() {
                 min: 0.0, max: 0.01, step: 0.0001, label: 'Evaporation',
                 hint: 'Rate of water loss to the atmosphere.'
             });
+            waterFolder.addBinding(simParams, 'waterFriction', { 
+                min: 0.5, max: 0.99, step: 0.01, label: 'Inertia',
+                hint: 'Water momentum retention. Higher values make water flow further.'
+            });
+            waterFolder.addBinding(simParams, 'waterSoftening', { 
+                min: 1.0, max: 2.0, step: 0.1, label: 'Softening',
+                hint: 'Reduces ripples on flat surfaces. Higher values make water calmer.'
+            });
+            waterFolder.addBinding(simParams, 'waterSmoothing', { 
+                min: 0.0, max: 0.5, step: 0.01, label: 'Smoothing',
+                hint: 'Laplacian smoothing to prevent checkerboard artifacts.'
+            });
             const erosionFolder = physFolder.addFolder({ title: 'Erosion' });
             erosionFolder.addBinding(simParams, 'erosionRate', { 
                 min: 0.0, max: 0.01, step: 0.0001, label: 'Erosion Rate',
@@ -291,6 +308,14 @@ export function createWorldLayer() {
             erosionFolder.addBinding(simParams, 'erosionStrength', { 
                 min: 0.0, max: 1.0, step: 0.01, label: 'Erosion Strength',
                 hint: 'Overall impact of erosion on the terrain height.'
+            });
+            erosionFolder.addBinding(simParams, 'talusRate', { 
+                min: 0.0, max: 0.1, step: 0.001, label: 'Talus Rate',
+                hint: 'Speed of thermal erosion (dry crumbling).'
+            });
+            erosionFolder.addBinding(simParams, 'talusThreshold', { 
+                min: 0.0, max: 0.01, step: 0.0001, label: 'Talus Thres',
+                hint: 'Slope threshold for thermal erosion.'
             });
             
             const viewFolder = guiFolder.addFolder({ title: 'Layers Visibility', expanded: true });
