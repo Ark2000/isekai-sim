@@ -199,20 +199,38 @@ void pass1_heightIntegration(inout vec4 d0, inout vec4 d1, inout vec4 d2, inout 
     float hB = (vTexC.a <= 0.0) ? vTexB.r : vTexC.r;
     
     // 2.2. Overshooting Reduction (stability enhancement from reference)
+    // Fixed: Limit flux instead of modifying neighbor depths (prevents water disappearing)
     {
         float hAvgMax = u_dampingBeta * u_gridSize / (u_gravity * u_deltaTime);
-        float hAdj = max(0.0, (vTexL.r + vTexR.r + vTexT.r + vTexB.r) / 4.0 - hAvgMax);
+        // Check if neighbors average exceeds limit
+        float hNeighborAvg = (vTexL.r + vTexR.r + vTexT.r + vTexB.r) / 4.0;
+        float hAdj = max(0.0, hNeighborAvg - hAvgMax);
         
-        hL -= hAdj;
-        hR -= hAdj;
-        hT -= hAdj;
-        hB -= hAdj;
+        // Apply reduction to flux calculation, not neighbor depths
+        // This prevents water from disappearing when brushing quickly
+        if (hAdj > 0.0) {
+            // Reduce the upwind depths used in flux calculation
+            hL = max(0.0, hL - hAdj);
+            hR = max(0.0, hR - hAdj);
+            hT = max(0.0, hT - hAdj);
+            hB = max(0.0, hB - hAdj);
+        }
     }
     
     // Compute divergence of flux (height change rate)
     float dH = -((hR * fxR - hL * fxL) / u_gridSize + (hB * fyB - hT * fyT) / u_gridSize);
     
+    // Limit maximum depth change per frame (CFL-like condition)
+    // This prevents instability when brushing water too quickly
+    float maxDepthChange = u_gridSize / (u_gravity * u_deltaTime) * 0.5;
+    dH = clamp(dH, -maxDepthChange, maxDepthChange);
+    
     vTexC.r += dH * u_deltaTime;
+    
+    // Fixed: Prevent negative water depth in Pass 1 (critical for stability)
+    if (vTexC.r <= 0.0) {
+        vTexC.r = 0.0;
+    }
     
     d3 = vTexC;
 }
