@@ -89,6 +89,12 @@ vec3 renderWater(vec2 uv, vec4 d0, vec4 d3, vec2 pixelSize, vec3 terrainColor) {
     vReflect += pow(fHdotN, 1200.0) * 20.0 * vSunColor; // Sharp highlight
     vReflect += pow(fHdotN, 180.0) * 0.5 * vSkyColor;   // Soft glow
     
+    // Reduce reflection for very shallow water (prevents permanent reflective layers)
+    // When water depth is below 0.001m, gradually fade out reflections
+    float minWaterDepth = 0.001;
+    float reflectionFade = smoothstep(0.0, minWaterDepth, waterDepth);
+    vReflect *= reflectionFade;
+    
     // Lighting on water surface
     float fLight = pow(max(dot(vNormal, -vLightDir), 0.0), 10.0);
     
@@ -139,7 +145,8 @@ void main() {
     
     // Enhanced water rendering (from reference)
     // Pass the grayscale terrain color to water rendering
-    if (u_showWater && d3.r > 0.0001) {
+    // Only render water above minimum depth threshold (prevents permanent reflective layers)
+    if (u_showWater && d3.r > 0.001) {
         finalColor = renderWater(v_uv, d0, d3, pixelSize, finalColor);
     }
     
