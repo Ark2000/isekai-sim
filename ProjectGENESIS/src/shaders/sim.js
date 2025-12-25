@@ -35,6 +35,8 @@ uniform int u_targetLayer;
 // Global Wind
 uniform vec2 u_globalWind; 
 
+uniform int u_WaterSimMode; // 0=SWE, 1=VPM
+
 // Physics Parameters (SWE)
 uniform float u_gravity; // g = 10.0 in reference
 uniform float u_gridSize; // cell size in meters = 5.0
@@ -53,12 +55,6 @@ uniform float u_tempDiffusion;
 uniform float u_tempInertia;
 uniform float u_thermalWind;
 uniform float u_waterEvap;
-
-// Old water physics parameters (removed, now handled by SWE)
-// uniform float u_waterFlow;
-// uniform float u_waterFriction;
-// uniform float u_waterSoftening;
-// uniform float u_waterSmoothing;
 
 // Erosion parameters (disabled)
 // uniform float u_erosionRate;
@@ -108,8 +104,96 @@ float snoise(vec2 v){
     return 130.0 * dot(m, g);
 }
 
+// ===== Pass 0: Virtual Pipe Mode (VPM) Water Simulation =====
+void pass0_waterSimulationVirtualPipeMode(inout vec4 d0, inout vec4 d1, inout vec4 d2, inout vec4 d3, vec2 pixelSize) {
+    float u_waterSoftening = 0.0;
+    float u_waterFriction = 0.2;
+    float u_waterFlow = 0.1;
+
+    float land = d0.r;
+    float water = d3.r;
+    float minWater = 0.0001;
+    vec2 flux = d3.ba; // 存储上一帧计算并限制好的通量 (B=Fx, A=Fy)
+
+    vec4 n0L = texture(u_tex0, v_uv + vec2(-pixelSize.x, 0));
+    vec4 n0R = texture(u_tex0, v_uv + vec2(pixelSize.x, 0));
+    vec4 n0D = texture(u_tex0, v_uv + vec2(0, -pixelSize.y));
+    vec4 n0U = texture(u_tex0, v_uv + vec2(0, pixelSize.y));
+    vec4 nLand = vec4(n0L.r, n0R.r, n0D.r, n0U.r);
+
+    vec4 n3L = texture(u_tex3, v_uv + vec2(-pixelSize.x, 0));
+    vec4 n3R = texture(u_tex3, v_uv + vec2(pixelSize.x, 0));
+    vec4 n3D = texture(u_tex3, v_uv + vec2(0, -pixelSize.y));
+    vec4 n3U = texture(u_tex3, v_uv + vec2(0, pixelSize.y));
+    vec4 nWater = vec4(n3L.r, n3R.r, n3D.r, n3U.r);
+
+    // 严格质量守恒：根据上一帧的通量计算当前的流入和流出
+    // 这样做能保证 A 给 B 的量，绝对等于 B 从 A 收到的量
+    float outR = max(0.0, flux.x);
+    float outL = max(0.0, -flux.x);
+    float outU = max(0.0, flux.y);
+    float outD = max(0.0, -flux.y);
+    float totalOut = outR + outL + outU + outD;
+
+    // 读取邻居上一帧存下的通量
+    float inR = max(0.0, -n3R.b); // 右邻居向左流
+    float inL = max(0.0, n3L.b);  // 左邻居向右流
+    float inU = max(0.0, -n3U.a); // 上邻居向下流
+    float inD = max(0.0, n3D.a);  // 下邻居向上流
+    float totalIn = inL + inR + inU + inD;
+
+    // 更新水量：当前水量 + 流入 - 流出
+    water = max(0.0, water + totalIn - totalOut);
+
+    // 2. 为下一帧计算新的期望通量 (Momentum + Pressure)
+    float totalHeight = land + water;
+    
+    // 简单梯度计算：中心差分
+    vec2 grad = vec2(
+        (nLand.y + nWater.y) - (nLand.x + nWater.x),  // X方向：右 - 左
+        (nLand.w + nWater.w) - (nLand.z + nWater.z)   // Y方向：上 - 下
+    );
+
+    // --- 改进：梯度软化 (抑制大地图上的细微波纹) ---
+    float gradLen = length(grad);
+    if (gradLen > 0.0) {
+        grad = (grad / gradLen) * 0.432;
+    }
+
+    float frictionBase = u_waterFriction;
+    float depthFriction = mix(0.4, frictionBase, smoothstep(0.0, 0.05, water)); 
+    float pull = u_waterFlow * 0.4;
+    
+    // 计算新通量 (限制浅水处的推力)
+    vec2 newFlux = flux * depthFriction - grad * pull * clamp(water * 10.0, 0.0, 1.0);
+
+    // 3. 核心安全锁：限制通量，确保下一帧流出的水不会超过当前水量
+    float nOutR = max(0.0, newFlux.x);
+    float nOutL = max(0.0, -newFlux.x);
+    float nOutU = max(0.0, newFlux.y);
+    float nOutD = max(0.0, -newFlux.y);
+    float nTotalOut = nOutR + nOutL + nOutU + nOutD;
+    
+    if (nTotalOut > water) {
+        newFlux *= (water / (nTotalOut + 1e-7));
+    }
+    
+    // 4. 边界处理
+    if (water < minWater) {
+        water = 0.0;
+        newFlux = vec2(0.0);
+    }
+    if (water > 20.0) water = 20.0 + (water - 20.0) * 0.99;
+    
+    // 更新输出
+    d3.r = water;
+    d3.ba = newFlux;
+
+}
+
 // ===== Pass 0: Velocity Integration (Based on reference buffer_C.glsl) =====
-void pass0_velocityIntegration(inout vec4 d0, inout vec4 d1, inout vec4 d2, inout vec4 d3, vec2 pixelSize) {
+// SWE mode function
+void pass0_waterSimulationSWE(inout vec4 d0, inout vec4 d1, inout vec4 d2, inout vec4 d3, vec2 pixelSize) {
     ivec2 tc = ivec2(v_uv * vec2(textureSize(u_tex0, 0)));
     
     vec4 vTexC = d3;
@@ -173,7 +257,8 @@ void pass0_velocityIntegration(inout vec4 d0, inout vec4 d1, inout vec4 d2, inou
 }
 
 // ===== Pass 1: Height Integration (Based on reference buffer_B.glsl) =====
-void pass1_heightIntegration(inout vec4 d0, inout vec4 d1, inout vec4 d2, inout vec4 d3, vec2 pixelSize) {
+// SWE mode function
+void pass1_heightIntegrationSWE(inout vec4 d0, inout vec4 d1, inout vec4 d2, inout vec4 d3, vec2 pixelSize) {
     ivec2 tc = ivec2(v_uv * vec2(textureSize(u_tex0, 0)));
     
     vec4 vTexC = d3;
@@ -415,11 +500,17 @@ void main() {
     
     // Execute different pass based on u_simPass
     if (u_simPass == 0) {
-        // Pass 0: Velocity Integration (Pressure -> Velocity)
-        pass0_velocityIntegration(d0, d1, d2, d3, pixelSize);
+        if (u_WaterSimMode == 1) {
+            pass0_waterSimulationVirtualPipeMode(d0, d1, d2, d3, pixelSize);
+        } else {
+            pass0_waterSimulationSWE(d0, d1, d2, d3, pixelSize);
+        }
     } else if (u_simPass == 1) {
-        // Pass 1: Height Integration (Velocity -> Water Depth)
-        pass1_heightIntegration(d0, d1, d2, d3, pixelSize);
+        if (u_WaterSimMode == 1) {
+            // do nothing
+        } else {
+            pass1_heightIntegrationSWE(d0, d1, d2, d3, pixelSize);
+        }
     } else if (u_simPass == 2) {
         // Pass 2: Erosion & Sediment Transport
         pass2_erosion(d0, d1, d2, d3, pixelSize);

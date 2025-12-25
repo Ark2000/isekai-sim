@@ -29,13 +29,15 @@ export function createWorldLayer() {
     const brushPos = { x: 0, y: 0 };
     let isBrushing = false;
     let brushMode = 1; // 1=Add, -1=Sub
-    let brushTarget = 0; // 0=Height, 1=Temperature, 2=Cloud, 4=Water
+    let brushTarget = 4; // 0=Height, 1=Temperature, 2=Cloud, 4=Water
     
     // 全局环境参数
     const globalWind = { x: 1.0, y: 0.2 };
     
     // 物理模拟参数
     const simParams = {
+        // Water Simulation Mode: 0=SWE, 1=VPM
+        waterSimMode: 1,
         // SWE Parameters (from reference implementation)
         gravity: 10.0,
         gridSize: 5.0,
@@ -416,6 +418,11 @@ export function createWorldLayer() {
             
             const physFolder = guiFolder.addFolder({ title: 'Physics Params', expanded: false });
             const sweFolder = physFolder.addFolder({ title: 'SWE (Shallow Water)' });
+            sweFolder.addBinding(simParams, 'waterSimMode', {
+                options: { 'SWE': 0, 'VPM': 1 },
+                label: 'Water Mode',
+                hint: 'Water simulation algorithm: SWE = Shallow Water Equations (2-pass), VPM = Virtual Pipe Mode (1-pass)'
+            });
             const speedBinding = sweFolder.addBinding(simParams, 'waterSpeedPercent', { 
                 min: 1, max: 100, step: 1, label: 'Water Speed %',
                 hint: '🌊 Water flow speed: 100% = normal, 1% = super slow (SAFE!)'

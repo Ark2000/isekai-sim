@@ -14,6 +14,9 @@ export function setSimUniforms(gl, program, params) {
     // Pass 控制
     gl.uniform1i(gl.getUniformLocation(program, 'u_simPass'), simPass || 0);
     
+    // Water Simulation Mode
+    gl.uniform1i(gl.getUniformLocation(program, 'u_WaterSimMode'), simParams.waterSimMode || 1);
+    
     // 笔刷
     gl.uniform2f(gl.getUniformLocation(program, 'u_brushPos'), brushPos.x, 1.0 - brushPos.y);
     gl.uniform1f(gl.getUniformLocation(program, 'u_brushRadius'), brush.radius / 256); // W = 256
