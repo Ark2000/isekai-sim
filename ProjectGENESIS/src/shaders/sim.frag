@@ -1,3 +1,4 @@
+#version 300 es
 /**
  * World Simulation Shader (Multi-Pass SWE + Atmosphere)
  * Pass 0: Velocity Integration (Pressure gradient -> Velocity update)
@@ -5,10 +6,12 @@
  * Pass 2: Erosion & Sediment Transport
  * Pass 3: Atmosphere (Wind, Cloud, Temperature)
  */
-export const WORLD_SIM_FS = /* glsl */ `#version 300 es
 precision highp float;
 
 in vec2 v_uv;
+
+// Include shared noise functions
+#include "common/noise.glsl"
 
 // 4 Input Textures (Previous frame state)
 uniform sampler2D u_tex0; // Terrain: R=Height
@@ -56,53 +59,14 @@ uniform float u_tempInertia;
 uniform float u_thermalWind;
 uniform float u_waterEvap;
 
-// Erosion parameters (disabled)
-// uniform float u_erosionRate;
-// uniform float u_depositionRate;
-// uniform float u_erosionStrength;
-// uniform float u_talusRate;
-// uniform float u_talusThreshold;
-
 // 4 Output Targets
 layout(location = 0) out vec4 out_tex0;
 layout(location = 1) out vec4 out_tex1;
 layout(location = 2) out vec4 out_tex2;
 layout(location = 3) out vec4 out_tex3;
 
-// ===== Helper Functions =====
+// ===== Constants =====
 #define EPS 0.0001
-
-float hash(vec2 p) {
-    vec3 p3  = fract(vec3(p.xyx) * .1031);
-    p3 += dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
-}
-
-vec3 permute(vec3 x) { return mod(((x*34.0)+1.0)*x, 289.0); }
-float snoise(vec2 v){
-    const vec4 C = vec4(0.211324865405187, 0.366025403784439,
-             -0.577350269189626, 0.024390243902439);
-    vec2 i  = floor(v + dot(v, C.yy) );
-    vec2 x0 = v -   i + dot(i, C.xx);
-    vec2 i1;
-    i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
-    vec4 x12 = x0.xyxy + C.xxzz;
-    x12.xy -= i1;
-    i = mod(i, 289.0);
-    vec3 p = permute( permute( i.y + vec3(0.0, i1.y, 1.0 ))
-    + i.x + vec3(0.0, i1.x, 1.0 ));
-    vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), 0.0);
-    m = m*m ; m = m*m ;
-    vec3 x = 2.0 * fract(p * C.www) - 1.0;
-    vec3 h = abs(x) - 0.5;
-    vec3 ox = floor(x + 0.5);
-    vec3 a0 = x - ox;
-    m *= 1.79284291400159 - 0.85373472095314 * ( a0*a0 + h*h );
-    vec3 g;
-    g.x  = a0.x  * x0.x  + h.x  * x0.y;
-    g.yz = a0.yz * x12.xz + h.yz * x12.yw;
-    return 130.0 * dot(m, g);
-}
 
 // ===== Pass 0: Virtual Pipe Mode (VPM) Water Simulation =====
 void pass0_waterSimulationVirtualPipeMode(inout vec4 d0, inout vec4 d1, inout vec4 d2, inout vec4 d3, vec2 pixelSize) {
@@ -188,7 +152,6 @@ void pass0_waterSimulationVirtualPipeMode(inout vec4 d0, inout vec4 d1, inout ve
     // 更新输出
     d3.r = water;
     d3.ba = newFlux;
-
 }
 
 // ===== Pass 0: Velocity Integration (Based on reference buffer_C.glsl) =====
@@ -324,84 +287,6 @@ void pass1_heightIntegrationSWE(inout vec4 d0, inout vec4 d1, inout vec4 d2, ino
 void pass2_erosion(inout vec4 d0, inout vec4 d1, inout vec4 d2, inout vec4 d3, vec2 pixelSize) {
     // Erosion and sediment transport disabled for now
     // Just pass through the data unchanged
-    
-    /* ORIGINAL EROSION CODE - DISABLED
-    float land = d0.r;
-    float water = d3.r;
-    float sediment = d3.g;
-    vec2 velocity = d3.ba;
-    
-    vec4 n0L = texture(u_tex0, v_uv + vec2(-pixelSize.x, 0));
-    vec4 n0R = texture(u_tex0, v_uv + vec2(pixelSize.x, 0));
-    vec4 n0D = texture(u_tex0, v_uv + vec2(0, -pixelSize.y));
-    vec4 n0U = texture(u_tex0, v_uv + vec2(0, pixelSize.y));
-    
-    vec4 n3L = texture(u_tex3, v_uv + vec2(-pixelSize.x, 0));
-    vec4 n3R = texture(u_tex3, v_uv + vec2(pixelSize.x, 0));
-    vec4 n3D = texture(u_tex3, v_uv + vec2(0, -pixelSize.y));
-    vec4 n3U = texture(u_tex3, v_uv + vec2(0, pixelSize.y));
-    
-    // --- Thermal Erosion (Talus / dry crumbling) ---
-    float talusRate = u_talusRate * 0.01;
-    
-    float talusL = max(0.0, (n0L.r - land) - u_talusThreshold);
-    float talusR = max(0.0, (n0R.r - land) - u_talusThreshold);
-    float talusD = max(0.0, (n0D.r - land) - u_talusThreshold);
-    float talusU = max(0.0, (n0U.r - land) - u_talusThreshold);
-    float totalTalusIn = (talusL + talusR + talusD + talusU) * talusRate;
-    
-    float talusOutL = max(0.0, (land - n0L.r) - u_talusThreshold);
-    float talusOutR = max(0.0, (land - n0R.r) - u_talusThreshold);
-    float talusOutD = max(0.0, (land - n0D.r) - u_talusThreshold);
-    float talusOutU = max(0.0, (land - n0U.r) - u_talusThreshold);
-    float totalTalusOut = (talusOutL + talusOutR + talusOutD + talusOutU) * talusRate;
-    
-    land += totalTalusIn - totalTalusOut;
-    
-    // --- Hydraulic Erosion ---
-    float erosionChange = 0.0;
-    float depositionChange = 0.0;
-    float sedimentChange = 0.0;
-    
-    float minWater = 0.0001;
-    if (water > minWater) {
-        float speed = length(velocity) * 10.0;
-        vec4 landHeightDiff = vec4(n0L.r, n0R.r, n0D.r, n0U.r) - land;
-        float slope = max(max(abs(landHeightDiff.x), abs(landHeightDiff.y)), 
-                         max(abs(landHeightDiff.z), abs(landHeightDiff.w)));
-        
-        float sedimentCapacity = clamp(speed * water * slope * 5.0, 0.0, 0.2);
-        
-        if (sediment < sedimentCapacity) {
-            float erosionAmount = (sedimentCapacity - sediment) * u_erosionRate * u_erosionStrength;
-            erosionChange = -erosionAmount;
-            sedimentChange = erosionAmount;
-        } else {
-            float depositionAmount = (sediment - sedimentCapacity) * u_depositionRate;
-            depositionChange = depositionAmount;
-            sedimentChange = -depositionAmount;
-        }
-    }
-    
-    // --- Sediment Transport (Flux-based, Mass-Conserving) ---
-    float sOutR = max(0.0, velocity.x) / (water + 1e-6);
-    float sOutL = max(0.0, -velocity.x) / (water + 1e-6);
-    float sOutU = max(0.0, velocity.y) / (water + 1e-6);
-    float sOutD = max(0.0, -velocity.y) / (water + 1e-6);
-    float sedTotalOut = (sOutR + sOutL + sOutU + sOutD) * sediment;
-    
-    float sInL = max(0.0, n3L.b) / (n3L.r + 1e-6) * n3L.g;
-    float sInR = max(0.0, -n3R.b) / (n3R.r + 1e-6) * n3R.g;
-    float sInD = max(0.0, n3D.a) / (n3D.r + 1e-6) * n3D.g;
-    float sInU = max(0.0, -n3U.a) / (n3U.r + 1e-6) * n3U.g;
-    float sedTotalIn = sInL + sInR + sInD + sInU;
-    
-    sediment = clamp(sediment + sedimentChange + sedTotalIn - sedTotalOut, 0.0, 0.5);
-    land = clamp(land + erosionChange + depositionChange, 0.0, 1.0);
-    
-    d0.r = land;
-    d3.g = sediment;
-    */
 }
 
 // ===== Pass 3: Atmosphere (Wind, Cloud, Temperature) =====
@@ -489,6 +374,7 @@ void applyBrush(inout vec4 d0, inout vec4 d1, inout vec4 d2, inout vec4 d3) {
         }
     }
 }
+
 // ===== Main Function =====
 void main() {
     vec4 d0 = texture(u_tex0, v_uv);
@@ -527,4 +413,3 @@ void main() {
     out_tex2 = d2;
     out_tex3 = d3;
 }
-`;

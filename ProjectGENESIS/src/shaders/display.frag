@@ -1,9 +1,10 @@
+#version 300 es
 /**
  * World Visualization Shader (Enhanced with SWE reference rendering)
  * Beautiful water rendering inspired by Shadertoy SWE implementation
  */
-export const WORLD_DISPLAY_FS = /* glsl */ `#version 300 es
 precision highp float;
+
 in vec2 v_uv;
 
 uniform sampler2D u_tex0; // Terrain
@@ -170,4 +171,3 @@ void main() {
     // Gamma correction for more realistic colors
     outColor = vec4(DeGamma(finalColor), 1.0);
 }
-`;

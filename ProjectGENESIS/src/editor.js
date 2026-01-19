@@ -7,7 +7,7 @@ import { createFPSDisplay } from './fps.js';
 import { createInputHandler } from './input.js';
 import { createRenderLoop } from './render.js';
 
-export function createEditor() {
+export async function createEditor() {
     const canvas = document.getElementById('terrainCanvas');
     const container = document.getElementById('layers');
     const gui = new Pane();
@@ -19,6 +19,10 @@ export function createEditor() {
     const viewport = createViewport(container);
     const fps = createFPSDisplay();
     const worldLayer = createWorldLayer();
+    
+    // 等待 WorldLayer 初始化完成（shader 加载等）
+    await worldLayer.ready;
+    
     const input = createInputHandler(canvas, viewport, worldLayer);
     const renderLoop = createRenderLoop(worldLayer, input, brushCanvas, fps, gui);
     

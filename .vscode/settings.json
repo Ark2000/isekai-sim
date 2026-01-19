@@ -1,0 +1,17 @@
+{
+    // GLSL 文件关联
+    "files.associations": {
+        "*.frag": "glsl",
+        "*.vert": "glsl",
+        "*.glsl": "glsl"
+    },
+    
+    // 如果使用 Shader languages support 扩展
+    "glsl.shaderVersion": "300 es",
+    
+    // 如果使用 GLSL Lint 扩展 - 禁用其检查（因为它不支持 ES 3.0）
+    "glsllint.glslangValidatorPath": "",
+    
+    // 如果使用 WebGL GLSL Editor 扩展
+    "webgl-glsl-editor.format.placeSpaceAfterKeywords": true
+}

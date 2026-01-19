@@ -1,9 +1,10 @@
 import { createCanvas } from './utils.js';
 import { createBrush } from './brush.js';
 import { W, H } from './config.js';
-import { createTexture, createMRTFramebuffer, createProgram, FULLSCREEN_QUAD_VS } from './GLUtils.js';
-import { WORLD_SIM_FS, WORLD_DISPLAY_FS, WORLD_GEN_FS } from './shaders/index.js';
+import { createTexture, createMRTFramebuffer, createProgram } from './GLUtils.js';
+import { loadShaders } from './ShaderLoader.js';
 import { setSimUniforms, setDisplayUniforms, drawQuad } from './uniforms.js';
+import { createWorldPipeline } from './RenderPipeline.js';
 
 export function createWorldLayer() {
     const TEXTURE_COUNT = 4;
@@ -79,7 +80,14 @@ export function createWorldLayer() {
     let lastMouseY = -1;
     let mouseHoverTimeout = null;
     
-    function initGpu() {
+    // 渲染管线
+    let pipeline = null;
+    
+    // 异步初始化标志
+    let isInitialized = false;
+    let initPromise = null;
+    
+    async function initGpu() {
         canvas = createCanvas();
         
         // 创建像素数据显示tooltip
@@ -177,19 +185,50 @@ export function createWorldLayer() {
         glContext.bindFramebuffer(glContext.FRAMEBUFFER, fbos.write);
         glContext.clear(glContext.COLOR_BUFFER_BIT);
         
-        programs.sim = createProgram(glContext, FULLSCREEN_QUAD_VS, WORLD_SIM_FS, 'WorldSim');
-        programs.display = createProgram(glContext, FULLSCREEN_QUAD_VS, WORLD_DISPLAY_FS, 'WorldDisplay');
-        programs.gen = createProgram(glContext, FULLSCREEN_QUAD_VS, WORLD_GEN_FS, 'WorldGen');
+        // 异步加载所有 shader 文件
+        console.log('[WorldLayer] Loading shaders...');
+        const shaders = await loadShaders({
+            vertex: './shaders/fullscreen.vert',
+            sim: './shaders/sim.frag',
+            display: './shaders/display.frag',
+            gen: './shaders/gen.frag'
+        });
+        console.log('[WorldLayer] Shaders loaded successfully');
+        
+        programs.sim = createProgram(glContext, shaders.vertex, shaders.sim, 'WorldSim');
+        programs.display = createProgram(glContext, shaders.vertex, shaders.display, 'WorldDisplay');
+        programs.gen = createProgram(glContext, shaders.vertex, shaders.gen, 'WorldGen');
         
         return glContext;
     }
     
-    gl = initGpu();
-    
-    // 初始化时自动生成地形
-    if (gl) {
-        generateTerrain();
-    }
+    // 启动异步初始化
+    initPromise = initGpu().then(glContext => {
+        gl = glContext;
+        
+        // 创建渲染管线
+        if (gl) {
+            pipeline = createWorldPipeline(
+                gl,
+                { quadBuffer, textures, fbos, canvas },
+                programs,
+                setSimUniforms,
+                setDisplayUniforms
+            );
+            console.log('[WorldLayer] Render pipeline created');
+        }
+        
+        isInitialized = true;
+        
+        // 初始化时自动生成地形
+        if (gl) {
+            generateTerrain();
+        }
+        
+        return glContext;
+    }).catch(err => {
+        console.error('[WorldLayer] Initialization failed:', err);
+    });
     
     function swap() {
         let temp = textures.read;
@@ -225,6 +264,9 @@ export function createWorldLayer() {
         get fbos() { return fbos; },
         get programs() { return programs; },
         get quadBuffer() { return quadBuffer; },
+        get isInitialized() { return isInitialized; },
+        get ready() { return initPromise; },
+        get pipeline() { return pipeline; },
         
         get genSeed() { return genSeed; },
         set genSeed(v) { genSeed = v; },
@@ -310,69 +352,42 @@ export function createWorldLayer() {
         },
         
         render() {
-            // Multi-Pass SWE Simulation
-            // Pass 0: Velocity Integration (Pressure -> Velocity)
-            gl.useProgram(programs.sim);
-            setSimUniforms(gl, programs.sim, {
-                brush, brushPos, brushMode, isBrushing, useTargetMode, targetValue,
-                globalWind, simParams, brushTarget, TEXTURE_COUNT, textures,
-                simPass: 0 // Pass 0
-            });
-            gl.bindFramebuffer(gl.FRAMEBUFFER, fbos.write);
-            gl.viewport(0, 0, W, H);
-            drawQuad(gl, programs.sim, quadBuffer);
-            swap();
+            // 确保初始化完成
+            if (!isInitialized || !gl || !pipeline) return;
             
-            // Pass 1: Height Integration (Velocity -> Water Depth)
-            gl.useProgram(programs.sim);
-            setSimUniforms(gl, programs.sim, {
-                brush, brushPos, brushMode, isBrushing: false, useTargetMode, targetValue,
-                globalWind, simParams, brushTarget, TEXTURE_COUNT, textures,
-                simPass: 1 // Pass 1
-            });
-            gl.bindFramebuffer(gl.FRAMEBUFFER, fbos.write);
-            gl.viewport(0, 0, W, H);
-            drawQuad(gl, programs.sim, quadBuffer);
-            swap();
+            // 构建帧上下文
+            const frameContext = {
+                // 笔刷相关
+                brush,
+                brushPos,
+                brushMode,
+                isBrushing,
+                useTargetMode,
+                targetValue,
+                brushTarget,
+                // 环境参数
+                globalWind,
+                simParams,
+                // 纹理
+                TEXTURE_COUNT,
+                textures,
+                // 显示选项
+                showHeight,
+                showTemp,
+                showCloud,
+                showWind,
+                showHillshade,
+                showWater
+            };
             
-            // Pass 2: Erosion & Sediment Transport
-            gl.useProgram(programs.sim);
-            setSimUniforms(gl, programs.sim, {
-                brush, brushPos, brushMode, isBrushing: false, useTargetMode, targetValue,
-                globalWind, simParams, brushTarget, TEXTURE_COUNT, textures,
-                simPass: 2 // Pass 2
-            });
-            gl.bindFramebuffer(gl.FRAMEBUFFER, fbos.write);
-            gl.viewport(0, 0, W, H);
-            drawQuad(gl, programs.sim, quadBuffer);
-            swap();
+            // 执行渲染管线
+            pipeline.execute(frameContext);
             
-            // Pass 3: Atmosphere (Wind, Cloud, Temperature)
-            gl.useProgram(programs.sim);
-            setSimUniforms(gl, programs.sim, {
-                brush, brushPos, brushMode, isBrushing: false, useTargetMode, targetValue,
-                globalWind, simParams, brushTarget, TEXTURE_COUNT, textures,
-                simPass: 3 // Pass 3
-            });
-            gl.bindFramebuffer(gl.FRAMEBUFFER, fbos.write);
-            gl.viewport(0, 0, W, H);
-            drawQuad(gl, programs.sim, quadBuffer);
-            swap();
-            
+            // 重置笔刷状态
             isBrushing = false;
             
-            // 更新像素数据显示（在切换到显示Pass之前读取）
+            // 更新像素数据显示
             this.updatePixelData();
-            
-            // Display Pass
-            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-            gl.viewport(0, 0, canvas.width, canvas.height);
-            gl.useProgram(programs.display);
-            setDisplayUniforms(gl, programs.display, {
-                TEXTURE_COUNT, textures, showHeight, showTemp, showCloud,
-                showWind, showHillshade, showWater
-            });
-            drawQuad(gl, programs.display, quadBuffer);
         },
         
         setupGUI(gui) {

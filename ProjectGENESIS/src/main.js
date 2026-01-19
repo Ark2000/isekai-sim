@@ -84,10 +84,12 @@ window.GenesisDebug = {
     }
 };
 
-window.onload = () => {
-    window.editor = createEditor();
-    
+window.onload = async () => {
     console.log('%cProject GENESIS', 'color: #0f0; font-size: 16px; font-weight: bold;');
+    console.log('Initializing...');
+    
+    window.editor = await createEditor();
+    
     console.log('Debug: GenesisDebug.getInfo() | GenesisDebug.checkGL() | GenesisDebug.readTexture()');
     console.log('Access: window.editor');
 }
